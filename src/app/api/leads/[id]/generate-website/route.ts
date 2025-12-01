@@ -6,15 +6,10 @@
  */
 
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/utils/supabase/admin';
 import { getIndustryWebsiteStyle, ARCHITECT_SYSTEM_PROMPT } from '@/config/agentPrompts';
 import { nanoid } from 'nanoid';
 import type { LeadWebsiteArtifact } from '@/types/database';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
@@ -32,6 +27,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const supabase = createAdminClient();
     const { id: leadId } = await params;
     const body = await request.json();
     const { industry, businessName, projectId } = body;

@@ -5,20 +5,16 @@
  * Previews expire after 30 days.
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/utils/supabase/admin';
 import { notFound } from 'next/navigation';
 import type { LeadWebsiteArtifact } from '@/types/database';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 interface PreviewPageProps {
   params: Promise<{ token: string }>;
 }
 
 export default async function PreviewPage({ params }: PreviewPageProps) {
+  const supabase = createAdminClient();
   const { token } = await params;
 
   // Fetch the website data
@@ -121,6 +117,7 @@ function extractBodyContent(html: string): string {
  * Generate static params for pre-rendering (optional)
  */
 export async function generateMetadata({ params }: PreviewPageProps) {
+  const supabase = createAdminClient();
   const { token } = await params;
 
   const { data: websiteData } = await supabase
