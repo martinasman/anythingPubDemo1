@@ -1,12 +1,14 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Clock, Trash2, Copy, Share2 } from 'lucide-react';
-import type { Project } from '@/types/database';
+import type { WebsiteArtifact, Project } from '@/types/database';
+import type { ProjectWithWebsite } from './ProjectDashboard';
 import { formatRelativeTime } from '@/utils/formatRelativeTime';
 
 interface ProjectCardProps {
-  project: Project;
+  project: ProjectWithWebsite;
   index: number;
   onDelete?: (projectId: string) => void;
 }
@@ -48,6 +50,38 @@ function getStatusColor(status: Project['status']): string {
 export default function ProjectCard({ project, index, onDelete }: ProjectCardProps) {
   const router = useRouter();
   const gradient = getGradient(project.name);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  // Create blob URL for website preview
+  useEffect(() => {
+    if (!project.websiteData?.files) {
+      setPreviewUrl(null);
+      return;
+    }
+
+    const htmlFile = project.websiteData.files.find(f => f.path === '/index.html');
+    const cssFile = project.websiteData.files.find(f => f.path === '/styles.css');
+    const jsFile = project.websiteData.files.find(f => f.path === '/script.js');
+
+    if (!htmlFile) {
+      setPreviewUrl(null);
+      return;
+    }
+
+    let html = htmlFile.content;
+    if (cssFile) {
+      html = html.replace('</head>', `<style>${cssFile.content}</style></head>`);
+    }
+    if (jsFile) {
+      html = html.replace('</body>', `<script>${jsFile.content}</script></body>`);
+    }
+
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    setPreviewUrl(url);
+
+    return () => URL.revokeObjectURL(url);
+  }, [project.websiteData]);
 
   const handleClick = () => {
     router.push(`/p/${project.id}`);
@@ -78,7 +112,16 @@ export default function ProjectCard({ project, index, onDelete }: ProjectCardPro
       className={`group p-4 rounded-2xl bg-white dark:bg-neutral-800/50 border border-zinc-200 dark:border-neutral-700/50 hover-scale cursor-pointer transition-all animate-fade-in-up stagger-${Math.min(index + 1, 6)}`}
     >
       {/* 16:9 Preview */}
-      <div className={`aspect-video rounded-xl bg-gradient-to-br ${gradient} mb-3 overflow-hidden`}>
+      <div className="aspect-video rounded-xl overflow-hidden mb-3 relative bg-white dark:bg-zinc-900">
+        {previewUrl ? (
+          <iframe
+            src={previewUrl}
+            className="absolute top-0 left-0 w-[500%] h-[500%] origin-top-left scale-[0.2] pointer-events-none"
+            title="Website preview"
+          />
+        ) : (
+          <div className={`w-full h-full bg-gradient-to-br ${gradient}`} />
+        )}
       </div>
 
       {/* Project info */}

@@ -6,8 +6,10 @@ import PreviewPanel from './PreviewPanel';
 import BrandView from './BrandView';
 import WebsiteFocusView from './WebsiteFocusView';
 import CRMFocusView from './CRMFocusView';
+import ClientsView from './ClientsView';
 import BusinessPlanView from './BusinessPlanView';
 import FirstWeekPlanView from './FirstWeekPlanView';
+import AdsFocusView from './AdsFocusView';
 import OnboardingWalkthrough from './OnboardingWalkthrough';
 import LoadingCanvas from './LoadingCanvas';
 import OverviewCanvas from './OverviewCanvas';
@@ -76,13 +78,8 @@ export default function ContextPanel() {
       return <LoadingCanvas />;
     }
 
-    // Overview state - show website preview if available, otherwise show cards
+    // Overview state - always show the overview cards
     if (canvasState.type === 'overview') {
-      // If website exists, show it as the main preview
-      if (artifacts.website?.files?.length) {
-        return <WebsiteFocusView />;
-      }
-      // Otherwise show the overview cards
       return <OverviewCanvas />;
     }
 
@@ -99,6 +96,10 @@ export default function ContextPanel() {
           return <FirstWeekPlanView />;
         case 'leads':
           return <CRMFocusView />;
+        case 'clients':
+          return <ClientsView />;
+        case 'ads':
+          return <AdsFocusView />;
         default:
           return <OverviewCanvas />;
       }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useProjectStore } from '@/store/projectStore';
-import { Check, Circle, Loader2 } from 'lucide-react';
+import { Check, Circle, Loader2, AlertCircle } from 'lucide-react';
 import Image from 'next/image';
 import { useState, useEffect } from 'react';
 
@@ -41,7 +41,8 @@ function TypewriterText({ text }: { text: string }) {
 }
 
 export default function LoadingCanvas() {
-  const { toolStatuses } = useProjectStore();
+  const { toolStatuses, retryGeneration } = useProjectStore();
+  const [expandedError, setExpandedError] = useState<string | null>(null);
   const tools = Array.from(toolStatuses.values());
 
   // Find the currently running tool
@@ -106,28 +107,30 @@ export default function LoadingCanvas() {
                 <Check className="w-4 h-4 text-green-500 flex-shrink-0" />
               )}
               {tool.status === 'running' && (
-                <Loader2 className="w-4 h-4 text-blue-500 animate-spin flex-shrink-0" />
+                <Loader2 className="w-4 h-4 text-zinc-600 dark:text-white animate-spin flex-shrink-0" />
               )}
               {tool.status === 'pending' && (
                 <Circle className="w-4 h-4 text-zinc-300 dark:text-zinc-600 flex-shrink-0" />
               )}
               {tool.status === 'error' && (
-                <Circle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
               )}
 
               {/* Status text */}
               <div className="flex-1 min-w-0">
-                <span className={`text-sm block truncate ${
-                  tool.status === 'complete'
-                    ? 'text-zinc-600 dark:text-zinc-400'
-                    : tool.status === 'running'
-                    ? 'text-zinc-900 dark:text-white font-medium'
-                    : tool.status === 'error'
-                    ? 'text-red-500'
-                    : 'text-zinc-400 dark:text-zinc-500'
-                }`}>
+                <button
+                  onClick={() => setExpandedError(expandedError === tool.name ? null : tool.name)}
+                  className={`text-sm block truncate text-left w-full ${
+                    tool.status === 'complete'
+                      ? 'text-zinc-600 dark:text-zinc-400'
+                      : tool.status === 'running'
+                      ? 'text-zinc-900 dark:text-white font-medium'
+                      : tool.status === 'error'
+                      ? 'text-red-500 hover:text-red-600 cursor-pointer'
+                      : 'text-zinc-400 dark:text-zinc-500'
+                  }`}>
                   {tool.displayName}
-                </span>
+                </button>
               </div>
 
               {/* Duration for completed - only show if we have a meaningful value */}
@@ -141,10 +144,50 @@ export default function LoadingCanvas() {
         )}
       </div>
 
+      {/* Expanded error details */}
+      {expandedError && (
+        (() => {
+          const errorTool = Array.from(toolStatuses.values()).find(t => t.name === expandedError);
+          if (errorTool?.status === 'error' && errorTool?.errorMessage) {
+            // Map tool names to artifact types for retry
+            const retryMap: Record<string, 'identity' | 'website' | 'businessPlan' | 'leads' | 'outreach'> = {
+              'generate_brand_identity': 'identity',
+              'generate_website_files': 'website',
+              'generate_business_plan': 'businessPlan',
+              'generate_leads': 'leads',
+              'generate_outreach_scripts': 'outreach',
+            };
+
+            const retryType = retryMap[errorTool.name];
+
+            return (
+              <div className="mt-4 w-72 p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/50 rounded-lg">
+                <p className="text-xs font-semibold text-red-700 dark:text-red-400 mb-2">Error Details:</p>
+                <p className="text-xs text-red-600 dark:text-red-300 mb-3 leading-relaxed">
+                  {errorTool.errorMessage}
+                </p>
+                {retryType && (
+                  <button
+                    onClick={() => {
+                      retryGeneration(retryType);
+                      setExpandedError(null);
+                    }}
+                    className="w-full px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-medium rounded transition-colors"
+                  >
+                    Try Again
+                  </button>
+                )}
+              </div>
+            );
+          }
+          return null;
+        })()
+      )}
+
       {/* Progress shimmer bar */}
       {runningTool && (
         <div className="mt-8 w-64 h-1 bg-zinc-200 dark:bg-zinc-700 rounded-full overflow-hidden">
-          <div className="h-full bg-gradient-to-r from-blue-500 via-purple-500 to-blue-500 animate-shimmer"
+          <div className="h-full bg-gradient-to-r from-zinc-400 via-white to-zinc-400 dark:from-zinc-500 dark:via-white dark:to-zinc-500 animate-shimmer"
                style={{
                  backgroundSize: '200% 100%',
                  animation: 'shimmer 2s ease-in-out infinite'

@@ -1,6 +1,6 @@
 'use client';
 
-import { Moon, Sun, Rocket, ArrowLeft } from 'lucide-react';
+import { Moon, Sun, Rocket, LayoutGrid, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useTheme } from 'next-themes';
@@ -27,6 +27,31 @@ export default function Toolbar({ projectName = 'New Project' }: ToolbarProps) {
 
   const handleBackToOverview = () => {
     setCanvasState({ type: 'overview' });
+  };
+
+  const getViewLabel = (state: typeof canvasState) => {
+    if (state.type === 'detail') {
+      switch (state.view) {
+        case 'website':
+          return 'Website';
+        case 'brand':
+          return 'Brand Identity';
+        case 'offer':
+          return 'Pricing';
+        case 'plan':
+          return 'First Week Plan';
+        case 'leads':
+          return 'Prospects';
+        case 'clients':
+          return 'Clients';
+        default:
+          return 'Detail';
+      }
+    }
+    if (state.type === 'lead-detail') {
+      return 'Lead Details';
+    }
+    return '';
   };
 
   return (
@@ -56,20 +81,34 @@ export default function Toolbar({ projectName = 'New Project' }: ToolbarProps) {
             {projectName}
           </span>
 
-          {/* Back to Overview Button - Only show when not on overview */}
-          {canvasState.type !== 'overview' && canvasState.type !== 'empty' && (
-            <>
-              <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700" />
-              <button
-                onClick={handleBackToOverview}
-                className="flex items-center gap-1.5 px-2 h-7 text-xs font-medium text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-md transition-colors"
-                aria-label="Back to Overview"
-              >
-                <ArrowLeft size={14} strokeWidth={1.5} />
-                <span>Overview</span>
-              </button>
-            </>
-          )}
+          {/* Divider */}
+          <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700" />
+
+          {/* Permanent Overview Button with Breadcrumbs */}
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={handleBackToOverview}
+              className={`flex items-center gap-1.5 px-3 h-7 text-xs font-medium rounded-md transition-colors ${
+                canvasState.type === 'overview'
+                  ? 'bg-blue-500/20 text-blue-600 dark:text-blue-400'
+                  : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+              }`}
+              aria-label="Go to Overview"
+            >
+              <LayoutGrid size={14} strokeWidth={2} />
+              <span>Overview</span>
+            </button>
+
+            {/* Breadcrumb separator + current view label */}
+            {canvasState.type !== 'overview' && canvasState.type !== 'empty' && (
+              <>
+                <ChevronRight size={14} className="text-zinc-300 dark:text-zinc-600" />
+                <span className="text-xs text-zinc-600 dark:text-zinc-400">
+                  {getViewLabel(canvasState)}
+                </span>
+              </>
+            )}
+          </div>
         </div>
 
         {/* Center Section - Empty (spacer) */}

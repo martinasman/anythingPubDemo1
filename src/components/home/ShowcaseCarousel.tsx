@@ -32,7 +32,7 @@ export default function ShowcaseCarousel() {
   };
 
   return (
-    <section className="py-28 sm:py-36 overflow-hidden">
+    <section className="py-12 sm:py-16 overflow-hidden">
       <Container>
         <SectionHeading
           title="See What AI Can Create"

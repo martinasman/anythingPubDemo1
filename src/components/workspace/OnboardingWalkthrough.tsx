@@ -131,10 +131,10 @@ export default function OnboardingWalkthrough({ onComplete }: OnboardingWalkthro
           {/* Action button */}
           <button
             onClick={handleNext}
-            className="w-full flex items-center justify-center gap-2 px-6 py-4 btn-primary text-white font-semibold rounded-xl transition-colors"
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm btn-primary text-white font-semibold rounded-xl transition-colors"
           >
             {isLastStep ? 'Get Started' : 'Next'}
-            <ChevronRight size={20} />
+            <ChevronRight size={16} />
           </button>
         </div>
       </div>

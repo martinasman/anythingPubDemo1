@@ -92,7 +92,7 @@ function SignInContent() {
         <button
           onClick={handleGoogleSignIn}
           disabled={isSigningIn}
-          className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-surface-2 hover:bg-surface-3 border border-zinc-200 dark:border-slate-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full flex items-center justify-center gap-3 px-3 py-2 text-sm bg-surface-2 hover:bg-surface-3 border border-zinc-200 dark:border-slate-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isSigningIn ? (
             <Loader2 className="w-5 h-5 animate-spin text-text-tertiary" />

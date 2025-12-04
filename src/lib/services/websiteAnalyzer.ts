@@ -309,6 +309,261 @@ function analyzeHTMLContent(
 }
 
 // ============================================
+// CONTENT EXTRACTION FOR WEBSITE IMPROVEMENT
+// ============================================
+
+/**
+ * Interface for extracted website content
+ */
+export interface ExtractedContent {
+  url: string;
+  colors: {
+    primary?: string;
+    secondary?: string;
+    accent?: string;
+  };
+  content: {
+    headline?: string;
+    tagline?: string;
+    headings: string[];
+    paragraphs: string[];
+  };
+  structure: {
+    layout: 'hero-centric' | 'grid-based' | 'single-column' | 'sidebar' | 'unknown';
+    hasCTA: boolean;
+    hasGallery: boolean;
+  };
+  images: string[];
+}
+
+/**
+ * Extract content from a website URL
+ * Uses linkedom for DOM parsing (lighter weight than jsdom)
+ */
+export async function extractWebsiteContent(url: string): Promise<ExtractedContent> {
+  try {
+    // Normalize URL
+    let normalizedUrl = url;
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      normalizedUrl = `https://${url}`;
+    }
+
+    // Fetch HTML
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+    const response = await fetch(normalizedUrl, {
+      method: 'GET',
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; WebsiteImprover/1.0; +http://example.com/bot)',
+        'Accept': 'text/html,application/xhtml+xml',
+      },
+      redirect: 'follow',
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch: ${response.status}`);
+    }
+
+    const html = await response.text();
+
+    // Parse HTML using linkedom
+    const { parseHTML } = await import('linkedom');
+    const dom = parseHTML(html);
+    const document = dom.document;
+
+    // Extract colors
+    const colors = extractColors(html, document);
+
+    // Extract text content
+    const content = extractTextContent(document);
+
+    // Analyze structure
+    const structure = analyzeStructure(document);
+
+    // Extract images
+    const images = extractImages(document, normalizedUrl);
+
+    return {
+      url: normalizedUrl,
+      colors,
+      content,
+      structure,
+      images,
+    };
+  } catch (error) {
+    // Return minimal content on error
+    return {
+      url: url,
+      colors: {},
+      content: {
+        headings: [],
+        paragraphs: [],
+      },
+      structure: {
+        layout: 'unknown',
+        hasCTA: false,
+        hasGallery: false,
+      },
+      images: [],
+    };
+  }
+}
+
+/**
+ * Extract color information from HTML
+ */
+function extractColors(
+  html: string,
+  document: any
+): ExtractedContent['colors'] {
+  const colors: ExtractedContent['colors'] = {};
+
+  // Try to extract from inline styles first
+  const colorPatterns = [
+    /#[0-9A-Fa-f]{6}\b/g, // Hex colors
+    /rgb\([0-9, ]+\)/g, // RGB colors
+  ];
+
+  const allMatches = new Set<string>();
+  colorPatterns.forEach(pattern => {
+    const matches = html.match(pattern);
+    if (matches) {
+      matches.forEach(m => allMatches.add(m));
+    }
+  });
+
+  const colorArray = Array.from(allMatches).slice(0, 10); // Get top 10
+
+  // Assign to color roles
+  if (colorArray.length > 0) colors.primary = colorArray[0];
+  if (colorArray.length > 1) colors.secondary = colorArray[1];
+  if (colorArray.length > 2) colors.accent = colorArray[2];
+
+  // Fallback: Look for theme-color meta tag
+  const themeColor = document.querySelector('meta[name="theme-color"]');
+  if (themeColor && !colors.primary) {
+    colors.primary = themeColor.getAttribute('content');
+  }
+
+  return colors;
+}
+
+/**
+ * Extract text content from HTML
+ */
+function extractTextContent(document: any): ExtractedContent['content'] {
+  const content: ExtractedContent['content'] = {
+    headings: [],
+    paragraphs: [],
+  };
+
+  // Extract headline (usually h1 or page title)
+  const h1 = document.querySelector('h1');
+  if (h1) {
+    content.headline = h1.textContent?.trim().substring(0, 100);
+  }
+
+  // Extract tagline (often in subtitle or meta description)
+  const metaDesc = document.querySelector('meta[name="description"]');
+  if (metaDesc) {
+    content.tagline = metaDesc.getAttribute('content')?.substring(0, 160);
+  }
+
+  // Extract all headings
+  const headings = document.querySelectorAll('h2, h3, h4');
+  headings.forEach((h: any) => {
+    const text = h.textContent?.trim();
+    if (text && text.length < 200) {
+      content.headings.push(text);
+    }
+  });
+
+  // Extract paragraphs (get first few substantial ones)
+  const paragraphs = document.querySelectorAll('p');
+  let paraCount = 0;
+  paragraphs.forEach((p: any) => {
+    if (paraCount < 5) {
+      const text = p.textContent?.trim();
+      if (text && text.length > 20 && text.length < 500) {
+        content.paragraphs.push(text);
+        paraCount++;
+      }
+    }
+  });
+
+  return content;
+}
+
+/**
+ * Analyze website structure/layout
+ */
+function analyzeStructure(document: any): ExtractedContent['structure'] {
+  const structure: ExtractedContent['structure'] = {
+    layout: 'unknown',
+    hasCTA: false,
+    hasGallery: false,
+  };
+
+  const html = document.documentElement.outerHTML;
+
+  // Detect layout patterns
+  const hasHeroSection = !!document.querySelector('[class*="hero"], [class*="banner"], header');
+  const hasGridLayout = !!document.querySelector('[class*="grid"], [class*="flex"], [class*="col"]');
+  const hasSidebar = !!document.querySelector('aside');
+  const isLongScrolling = html.length > 50000; // Longer content often indicates single-column
+
+  if (hasHeroSection && !hasGridLayout) {
+    structure.layout = 'hero-centric';
+  } else if (hasGridLayout && !hasSidebar) {
+    structure.layout = 'grid-based';
+  } else if (hasSidebar) {
+    structure.layout = 'sidebar';
+  } else if (isLongScrolling) {
+    structure.layout = 'single-column';
+  }
+
+  // Check for CTA buttons
+  const buttons = document.querySelectorAll('button, a[class*="btn"], a[class*="cta"]');
+  structure.hasCTA = buttons.length > 0;
+
+  // Check for gallery/portfolio
+  const gallery = !!document.querySelector('[class*="gallery"], [class*="portfolio"], [class*="carousel"]');
+  structure.hasGallery = gallery;
+
+  return structure;
+}
+
+/**
+ * Extract image URLs
+ */
+function extractImages(document: any, baseUrl: string): string[] {
+  const images: string[] = [];
+  const imgElements = document.querySelectorAll('img');
+
+  imgElements.forEach((img: any, index: number) => {
+    if (index < 10) { // Limit to first 10
+      let src = img.getAttribute('src') || img.getAttribute('data-src');
+      if (src) {
+        // Convert relative URLs to absolute
+        if (src.startsWith('/')) {
+          const baseUrlObj = new URL(baseUrl);
+          src = `${baseUrlObj.origin}${src}`;
+        } else if (!src.startsWith('http')) {
+          src = `${baseUrl}/${src}`;
+        }
+        images.push(src);
+      }
+    }
+  });
+
+  return images;
+}
+
+// ============================================
 // BATCH ANALYSIS
 // ============================================
 

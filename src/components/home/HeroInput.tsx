@@ -109,7 +109,7 @@ export default function HeroInput() {
               }
             }}
             placeholder="Ask anything..."
-            className="w-full px-6 pt-6 pb-24 text-sm text-black dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 resize-none focus:outline-none bg-transparent"
+            className="w-full px-4 pt-4 pb-16 text-sm text-black dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 resize-none focus:outline-none bg-transparent"
             rows={1}
             style={{ minHeight: '100px' }}
             disabled={isSubmitting}
@@ -184,7 +184,7 @@ export default function HeroInput() {
                             setIsModelDropdownOpen(false);
                             setSearchQuery('');
                           }}
-                          className={`w-full px-4 py-3 text-left hover:bg-zinc-50 dark:hover:bg-slate-700 transition-colors ${
+                          className={`w-full px-3 py-2 text-sm text-left hover:bg-zinc-50 dark:hover:bg-slate-700 transition-colors ${
                             selectedModel?.id === model.id
                               ? 'bg-zinc-50 dark:bg-slate-700'
                               : ''

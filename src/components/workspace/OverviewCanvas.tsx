@@ -2,14 +2,15 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useProjectStore } from '@/store/projectStore';
-import { Globe, Palette, DollarSign, Users, Check, Paintbrush, Image } from 'lucide-react';
+import { Globe, DollarSign, Users, Check, Paintbrush, Image } from 'lucide-react';
 import { useCanvasBackground, backgrounds } from '@/hooks/useCanvasBackground';
 
 export default function OverviewCanvas() {
-  const { setCanvasState, setWorkspaceView } = useProjectStore();
+  const { setCanvasState, setWorkspaceView, artifacts } = useProjectStore();
   const { selectedBgId, setSelectedBgId, bgStyle, isDark } = useCanvasBackground();
 
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
 
   // Close picker when clicking outside
@@ -27,10 +28,42 @@ export default function OverviewCanvas() {
 
   // Card styling based on background
   const cardBg = isDark ? 'bg-zinc-900/80 backdrop-blur-sm' : 'bg-white/90 backdrop-blur-sm';
+  const cardBorder = isDark ? 'border border-white/20' : 'border border-zinc-300';
   const titleColor = isDark ? 'text-white' : 'text-zinc-900';
   const descColor = isDark ? 'text-zinc-400' : 'text-zinc-600';
   const bulletColor = isDark ? 'text-zinc-300' : 'text-zinc-700';
   const iconColor = isDark ? 'text-zinc-500' : 'text-zinc-400';
+
+  // Create blob URL for website preview (same approach as WebsiteFocusView)
+  useEffect(() => {
+    if (!artifacts.website?.files) {
+      setPreviewUrl(null);
+      return;
+    }
+
+    const htmlFile = artifacts.website.files.find(f => f.path === '/index.html');
+    const cssFile = artifacts.website.files.find(f => f.path === '/styles.css');
+    const jsFile = artifacts.website.files.find(f => f.path === '/script.js');
+
+    if (!htmlFile) {
+      setPreviewUrl(null);
+      return;
+    }
+
+    let html = htmlFile.content;
+    if (cssFile) {
+      html = html.replace('</head>', `<style>${cssFile.content}</style></head>`);
+    }
+    if (jsFile) {
+      html = html.replace('</body>', `<script>${jsFile.content}</script></body>`);
+    }
+
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    setPreviewUrl(url);
+
+    return () => URL.revokeObjectURL(url);
+  }, [artifacts.website]);
 
   return (
     <div
@@ -93,71 +126,60 @@ export default function OverviewCanvas() {
       {/* Grid Layout - Centered, asymmetric */}
       <div className="grid grid-cols-3 gap-4 p-6" style={{ maxWidth: '800px' }}>
 
-        {/* Website Card - Wide */}
+        {/* Website Card - Wide - Just the preview */}
         <div
-          className={`col-span-2 ${cardBg} rounded-2xl p-6 cursor-pointer transition-all hover:scale-[1.02] min-h-[240px] flex flex-col`}
+          className={`col-span-2 rounded-2xl cursor-pointer transition-all hover:scale-[1.02] min-h-[240px] overflow-hidden ${cardBorder}`}
           onClick={() => {
             setCanvasState({ type: 'detail', view: 'website' });
             setWorkspaceView('SITE');
           }}
         >
-          <h3 className={`${titleColor} text-sm font-medium mb-1`}>Your Website</h3>
-          <p className={`${descColor} text-xs mb-3`}>
-            A complete landing page built for your business.
-          </p>
-          <ul className="space-y-1.5 flex-1">
-            <li className={`flex items-center gap-2 text-xs ${bulletColor}`}>
-              <Check className={`w-3 h-3 ${iconColor} flex-shrink-0`} />
-              Responsive design
-            </li>
-            <li className={`flex items-center gap-2 text-xs ${bulletColor}`}>
-              <Check className={`w-3 h-3 ${iconColor} flex-shrink-0`} />
-              SEO optimized
-            </li>
-            <li className={`flex items-center gap-2 text-xs ${bulletColor}`}>
-              <Check className={`w-3 h-3 ${iconColor} flex-shrink-0`} />
-              Fast loading
-            </li>
-          </ul>
-          <div className="flex justify-end mt-2">
-            <Globe className={`w-8 h-8 ${iconColor}`} />
+          {/* Preview fills entire card */}
+          <div className="relative w-full h-full min-h-[240px] bg-white">
+            {previewUrl ? (
+              <iframe
+                src={previewUrl}
+                className="absolute top-0 left-0 w-[500%] h-[500%] origin-top-left scale-[0.2] pointer-events-none"
+                title="Website preview"
+              />
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center bg-zinc-100">
+                <Globe className={`w-8 h-8 ${iconColor}`} />
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Brand Card */}
+        {/* Ads Card - 2x2 grid preview */}
         <div
-          className={`col-span-1 ${cardBg} rounded-2xl p-6 cursor-pointer transition-all hover:scale-[1.02] min-h-[240px] flex flex-col`}
+          className={`col-span-1 rounded-2xl cursor-pointer transition-all hover:scale-[1.02] min-h-[240px] overflow-hidden relative ${cardBorder}`}
           onClick={() => {
-            setCanvasState({ type: 'detail', view: 'brand' });
-            setWorkspaceView('BRAND');
+            setCanvasState({ type: 'detail', view: 'ads' });
+            setWorkspaceView('ADS');
           }}
         >
-          <h3 className={`${titleColor} text-sm font-medium mb-1`}>Brand Identity</h3>
-          <p className={`${descColor} text-xs mb-3`}>
-            Your unique brand assets.
-          </p>
-          <ul className="space-y-1.5 flex-1">
-            <li className={`flex items-center gap-2 text-xs ${bulletColor}`}>
-              <Check className={`w-3 h-3 ${iconColor} flex-shrink-0`} />
-              Logo
-            </li>
-            <li className={`flex items-center gap-2 text-xs ${bulletColor}`}>
-              <Check className={`w-3 h-3 ${iconColor} flex-shrink-0`} />
-              Colors
-            </li>
-            <li className={`flex items-center gap-2 text-xs ${bulletColor}`}>
-              <Check className={`w-3 h-3 ${iconColor} flex-shrink-0`} />
-              Typography
-            </li>
-          </ul>
-          <div className="flex justify-end mt-2">
-            <Palette className={`w-8 h-8 ${iconColor}`} />
-          </div>
+          {artifacts.ads?.ads?.length ? (
+            <div className="absolute inset-0 grid grid-cols-2 gap-1 p-1">
+              {artifacts.ads.ads.slice(0, 4).map((ad) => (
+                <div key={ad.id} className="relative overflow-hidden rounded-lg bg-zinc-800">
+                  <img
+                    src={ad.imageUrl}
+                    alt={ad.headline}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className={`w-full h-full ${cardBg} flex items-center justify-center`}>
+              <Image className={`w-8 h-8 ${iconColor}`} />
+            </div>
+          )}
         </div>
 
         {/* Offer Card */}
         <div
-          className={`col-span-1 ${cardBg} rounded-2xl p-6 cursor-pointer transition-all hover:scale-[1.02] min-h-[240px] flex flex-col`}
+          className={`col-span-1 ${cardBg} ${cardBorder} rounded-2xl p-6 cursor-pointer transition-all hover:scale-[1.02] min-h-[240px] flex flex-col`}
           onClick={() => {
             setCanvasState({ type: 'detail', view: 'offer' });
             setWorkspaceView('FINANCE');
@@ -184,7 +206,7 @@ export default function OverviewCanvas() {
 
         {/* CRM/Leads Card - Wide */}
         <div
-          className={`col-span-2 ${cardBg} rounded-2xl p-6 cursor-pointer transition-all hover:scale-[1.02] min-h-[240px] flex flex-col`}
+          className={`col-span-2 ${cardBg} ${cardBorder} rounded-2xl p-6 cursor-pointer transition-all hover:scale-[1.02] min-h-[240px] flex flex-col`}
           onClick={() => {
             setCanvasState({ type: 'detail', view: 'leads' });
             setWorkspaceView('CRM');

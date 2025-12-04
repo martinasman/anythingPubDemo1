@@ -27,14 +27,14 @@ const steps = [
 
 export default function HowItWorks() {
   return (
-    <section id="how-it-works" className="py-20 sm:py-28 bg-zinc-50 dark:bg-slate-900/50 transition-colors">
+    <section id="how-it-works" className="py-12 sm:py-16 bg-zinc-50 dark:bg-slate-900/50 transition-colors">
       <Container>
         <SectionHeading
           title="Three Steps to Launch"
           subtitle="From idea to live business in minutes, not months"
         />
 
-        <div className="grid md:grid-cols-3 gap-8 lg:gap-12">
+        <div className="grid md:grid-cols-3 gap-4 lg:gap-6">
           {steps.map((step, index) => (
             <div
               key={step.number}
@@ -54,7 +54,7 @@ export default function HowItWorks() {
               </div>
 
               {/* Content */}
-              <h3 className="text-xl font-semibold text-zinc-900 dark:text-slate-100 mb-3">
+              <h3 className="text-lg font-semibold text-zinc-900 dark:text-slate-100 mb-3">
                 {step.title}
               </h3>
               <p className="text-zinc-600 dark:text-slate-400 leading-relaxed">

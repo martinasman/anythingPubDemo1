@@ -3,7 +3,15 @@ import { generateText } from 'ai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { createClient } from '@supabase/supabase-js';
 import type { WebsiteArtifact } from '@/types/database';
-import { ARCHITECT_SYSTEM_PROMPT } from '@/config/agentPrompts';
+import { ARCHITECT_SYSTEM_PROMPT, getArchitectPrompt } from '@/config/agentPrompts';
+import {
+  PATTERN_REGISTRY,
+  resolvePatternDependencies,
+  mergePatternsIntoProject,
+  determineRequiredPatterns,
+} from '@/config/codePatterns';
+import { getIndustryContext } from '@/config/industryContext';
+import { analyzeBusinessPersonality, getDesignAdaptations } from '@/lib/services/businessAnalyzer';
 
 // ============================================
 // SCHEMA DEFINITION
@@ -11,6 +19,7 @@ import { ARCHITECT_SYSTEM_PROMPT } from '@/config/agentPrompts';
 
 export const codeGenSchema = z.object({
   businessDescription: z.string().describe('Description of the business and its purpose'),
+  mode: z.enum(['html', 'nextjs']).optional().describe('App mode: html for landing pages, nextjs for full-stack apps'),
   identity: z
     .object({
       name: z.string(),
@@ -31,8 +40,27 @@ export const codeGenSchema = z.object({
 // TOOL IMPLEMENTATION
 // ============================================
 
-export async function generateWebsiteFiles(params: z.infer<typeof codeGenSchema> & { projectId: string; modelId?: string }) {
-  const { businessDescription, identity, projectId, modelId } = params;
+/**
+ * Main entry point for website generation
+ * Routes to HTML or Next.js generation based on mode
+ */
+export async function generateWebsiteFiles(params: z.infer<typeof codeGenSchema> & { projectId: string; modelId?: string; marketResearch?: any; mode?: 'html' | 'nextjs' }) {
+  const { mode = 'html' } = params;
+
+  console.log('[Code Tool] Generating ' + mode + ' app');
+
+  if (mode === 'nextjs') {
+    return await generateFullStackApp(params);
+  } else {
+    return await generateHTMLSite(params);
+  }
+}
+
+/**
+ * Generate HTML landing page (existing logic)
+ */
+async function generateHTMLSite(params: z.infer<typeof codeGenSchema> & { projectId: string; modelId?: string; marketResearch?: any }) {
+  const { businessDescription, identity, projectId, modelId, marketResearch } = params;
 
   try {
     // Initialize OpenRouter client
@@ -44,12 +72,59 @@ export async function generateWebsiteFiles(params: z.infer<typeof codeGenSchema>
     const selectedModel = 'google/gemini-3-pro-preview';
     console.log('[Code Tool] Using model:', selectedModel);
 
+    // Get industry context for personalized website generation
+    const industryContext = getIndustryContext(businessDescription);
+    const personality = analyzeBusinessPersonality(businessDescription);
+    const designAdaptations = getDesignAdaptations(personality);
+
     // Build the prompt with world-class design standards
     const prompt = `${ARCHITECT_SYSTEM_PROMPT}
 
 ===== PROJECT BRIEF =====
 
 Business Description: ${businessDescription}
+
+===== INDUSTRY CONTEXT (PERSONALIZATION) =====
+Industry: ${industryContext.industry}
+Target Tone: ${industryContext.tone.join(', ')}
+Key Content Themes: ${industryContext.contentThemes.join(', ')}
+
+Copywriting Guidelines:
+${industryContext.copyGuidelines}
+
+Visual Emphasis:
+${industryContext.visualEmphasis}
+
+Recommended CTAs:
+${industryContext.ctaLanguage.map((cta, i) => `${i + 1}. "${cta}"`).join('\n')}
+
+Trust Signals to Highlight:
+${industryContext.trustSignals.join(', ')}
+
+===== BUSINESS PERSONALITY =====
+Tone: ${personality.tone}
+Sophistication Level: ${personality.sophistication}
+Target Audience: ${personality.targetAudience}
+Price Position: ${personality.pricePosition}
+
+Design Recommendations:
+- Color Scheme: ${designAdaptations.colorScheme}
+- Typography: ${designAdaptations.typography}
+- Spacing: ${designAdaptations.spacing}
+- Imagery Style: ${designAdaptations.imagery}
+
+${marketResearch ? `
+===== COMPETITIVE POSITIONING (FROM MARKET RESEARCH) =====
+Market Saturation: ${marketResearch.saturationLevel || 'Not analyzed'}
+Competitor Price Range: ${marketResearch.priceRange ? `$${marketResearch.priceRange.min} - $${marketResearch.priceRange.max}` : 'Not analyzed'}
+Recommended Strategy: ${marketResearch.recommendedStrategy || 'Not analyzed'}
+
+Key Market Gaps:
+${marketResearch.gaps && marketResearch.gaps.length > 0 ? marketResearch.gaps.slice(0, 3).map((gap: string, i: number) => `${i + 1}. ${gap}`).join('\n') : 'Not analyzed'}
+
+Your Unique Differentiators:
+${marketResearch.differentiators && marketResearch.differentiators.length > 0 ? marketResearch.differentiators.slice(0, 3).map((diff: string, i: number) => `${i + 1}. ${diff}`).join('\n') : 'Not analyzed'}
+` : ''}
 
 ${
   identity
@@ -279,4 +354,294 @@ document.querySelectorAll('form').forEach(form => {
       error: error instanceof Error ? error.message : 'Unknown error occurred',
     };
   }
+}
+
+/**
+ * Generate full-stack Next.js + Supabase application
+ */
+async function generateFullStackApp(params: z.infer<typeof codeGenSchema> & { projectId: string; modelId?: string; marketResearch?: any }) {
+  const { businessDescription, identity, projectId, modelId, marketResearch } = params;
+
+  try {
+    console.log('[Code Tool] Starting full-stack generation');
+
+    // Initialize OpenRouter client
+    const openrouter = createOpenRouter({
+      apiKey: process.env.OPENROUTER_API_KEY!,
+    });
+
+    // Determine required patterns from description
+    const requiredPatterns = determineRequiredPatterns(businessDescription);
+    console.log('[Code Tool] Required patterns:', requiredPatterns);
+
+    // Resolve all pattern dependencies
+    const resolvedPatterns = resolvePatternDependencies(requiredPatterns);
+    console.log('[Code Tool] Resolved patterns:', resolvedPatterns.map(p => p.id));
+
+    // Get pattern context for prompt
+    const patternContext = resolvedPatterns
+      .map(p => `Pattern: ${p.id}\n${p.description}\nFiles: ${p.files.map(f => f.path).join(', ')}`)
+      .join('\n\n');
+
+    // Build enhanced prompt
+    const architectPrompt = getArchitectPrompt('nextjs');
+    const fullPrompt = `${architectPrompt}
+
+===== AVAILABLE PATTERNS =====
+${patternContext}
+
+===== PROJECT BRIEF =====
+Business: ${businessDescription}
+${identity ? `Brand: ${identity.name}` : ''}
+${marketResearch ? `Market: ${JSON.stringify(marketResearch).substring(0, 200)}...` : ''}
+
+Generate a complete Next.js application using the available patterns.`;
+
+    // Call LLM
+    const selectedModel = 'google/gemini-3-pro-preview';
+    console.log('[Code Tool] Calling LLM:', selectedModel);
+
+    const { text } = await generateText({
+      model: openrouter(selectedModel),
+      prompt: fullPrompt,
+      temperature: 0.7,
+    });
+
+    // Parse response
+    let parsedResponse: { files: Array<{ path: string; content: string; type: string }> } = { files: [] };
+    try {
+      const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/```\n([\s\S]*?)\n```/);
+      const jsonString = jsonMatch ? jsonMatch[1] : text;
+      parsedResponse = JSON.parse(jsonString);
+    } catch (parseError) {
+      console.error('[Code Tool] Parse error, attempting to extract JSON...');
+      // Fallback: try to find JSON object
+      const jsonStartIndex = text.indexOf('{');
+      const jsonEndIndex = text.lastIndexOf('}');
+      if (jsonStartIndex !== -1 && jsonEndIndex !== -1) {
+        try {
+          parsedResponse = JSON.parse(text.substring(jsonStartIndex, jsonEndIndex + 1));
+        } catch {
+          console.error('[Code Tool] Failed to parse LLM response:', text.substring(0, 500));
+          throw new Error('LLM did not return valid JSON');
+        }
+      }
+    }
+
+    // Merge patterns with generated files
+    const patternFiles = mergePatternsIntoProject(resolvedPatterns, {
+      PROJECT_NAME: identity?.name || 'My App',
+      PROJECT_SLUG: (identity?.name || 'my-app').toLowerCase().replace(/\s+/g, '-'),
+    });
+
+    // Combine all files, with generated files taking precedence
+    const fileMap = new Map<string, { path: string; content: string; type: string }>();
+
+    // Add pattern files first
+    patternFiles.files.forEach(file => {
+      fileMap.set(file.path, file as any);
+    });
+
+    // Add/override with generated files
+    parsedResponse.files.forEach(file => {
+      if (file.content) {
+        fileMap.set(file.path, {
+          path: file.path,
+          content: file.content,
+          type: file.type,
+        });
+      }
+    });
+
+    // Ensure essential files
+    const allFiles = Array.from(fileMap.values());
+    const ensuredFiles = ensureEssentialNextJsFiles(allFiles, identity) as Array<{
+      path: string;
+      content: string;
+      type: 'html' | 'css' | 'js' | 'json' | 'tsx' | 'ts' | 'jsx' | 'sql' | 'env' | 'md';
+    }>;
+
+    // Build artifact
+    const websiteData: WebsiteArtifact = {
+      files: ensuredFiles,
+      primaryPage: '/app/page.tsx',
+      appType: 'nextjs',
+      metadata: {
+        patterns: requiredPatterns,
+        envVars: {
+          required: patternFiles.envVars.required,
+          optional: patternFiles.envVars.optional,
+        },
+        setupInstructions: generateSetupInstructions(requiredPatterns, identity),
+        dependencies: patternFiles.dependencies,
+      },
+    };
+
+    // Save to Supabase
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+
+    const { data: artifact, error } = await (supabase.from('artifacts') as any)
+      .upsert(
+        {
+          project_id: projectId,
+          type: 'website_code',
+          data: websiteData,
+          version: 1,
+        },
+        {
+          onConflict: 'project_id,type',
+        }
+      )
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Failed to save artifact:', error);
+      throw new Error('Failed to save application');
+    }
+
+    return {
+      success: true,
+      artifact,
+      summary: `🚀 Generated full-stack Next.js app with ${websiteData.files.length} files (${requiredPatterns.length} patterns)`,
+    };
+  } catch (error) {
+    console.error('[Code Tool] Full-stack generation error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred',
+    };
+  }
+}
+
+/**
+ * Ensure essential Next.js configuration files exist
+ */
+function ensureEssentialNextJsFiles(
+  files: Array<{ path: string; content: string; type: string }>,
+  identity?: any
+) {
+  const fileMap = new Map<string, { path: string; content: string; type: string }>();
+
+  files.forEach(file => {
+    fileMap.set(file.path, file);
+  });
+
+  // Ensure package.json exists
+  if (!fileMap.has('/package.json')) {
+    fileMap.set('/package.json', {
+      path: '/package.json',
+      type: 'json',
+      content: JSON.stringify(
+        {
+          name: (identity?.name || 'my-app').toLowerCase().replace(/\s+/g, '-'),
+          version: '0.1.0',
+          private: true,
+          scripts: {
+            dev: 'next dev',
+            build: 'next build',
+            start: 'next start',
+            lint: 'next lint',
+          },
+          dependencies: {
+            next: '15.1.0',
+            react: '19.0.0-rc.1',
+            'react-dom': '19.0.0-rc.1',
+            '@supabase/supabase-js': '2.47.0',
+          },
+          devDependencies: {
+            '@types/node': '20.15.1',
+            '@types/react': '18.3.3',
+            '@types/react-dom': '18.3.0',
+            tailwindcss: '4.0.0',
+            typescript: '5.7.0',
+          },
+        },
+        null,
+        2
+      ),
+    });
+  }
+
+  // Ensure .env.example exists
+  if (!fileMap.has('/.env.example')) {
+    fileMap.set('/.env.example', {
+      path: '/.env.example',
+      type: 'env',
+      content: `# Supabase
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+
+# App Configuration
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+`,
+    });
+  }
+
+  // Ensure README.md exists
+  if (!fileMap.has('/README.md')) {
+    fileMap.set('/README.md', {
+      path: '/README.md',
+      type: 'md',
+      content: `# ${identity?.name || 'Next.js App'}
+
+Generated with Anything Platform.
+
+## Setup
+
+1. Install dependencies:
+\`\`\`bash
+npm install
+\`\`\`
+
+2. Configure environment:
+\`\`\`bash
+cp .env.example .env.local
+\`\`\`
+
+3. Set up database:
+- Create a Supabase project
+- Run migrations in supabase/migrations/ in order
+- Update .env.local with your Supabase credentials
+
+4. Run development server:
+\`\`\`bash
+npm run dev
+\`\`\`
+
+5. Open http://localhost:3000
+`,
+    });
+  }
+
+  return Array.from(fileMap.values());
+}
+
+/**
+ * Generate setup instructions based on patterns
+ */
+function generateSetupInstructions(patterns: string[], identity?: any): string {
+  let instructions = `# Setup Instructions for ${identity?.name || 'Next.js App'}\n\n`;
+
+  instructions += `## 1. Install Dependencies\n\`\`\`bash\nnpm install\n\`\`\`\n\n`;
+
+  instructions += `## 2. Environment Variables\n`;
+  instructions += `Copy \`.env.example\` to \`.env.local\` and fill in:\n`;
+  instructions += `- \`NEXT_PUBLIC_SUPABASE_URL\`: Your Supabase project URL\n`;
+  instructions += `- \`NEXT_PUBLIC_SUPABASE_ANON_KEY\`: Your Supabase anonymous key\n\n`;
+
+  if (patterns.includes('user-profile-table') || patterns.includes('supabase-auth')) {
+    instructions += `## 3. Database Setup\n`;
+    instructions += `1. Go to your Supabase project dashboard\n`;
+    instructions += `2. Open SQL Editor\n`;
+    instructions += `3. Run migrations in \`supabase/migrations/\` in order\n\n`;
+  }
+
+  instructions += `## 4. Run Development Server\n\`\`\`bash\nnpm run dev\n\`\`\`\n\n`;
+  instructions += `Open [http://localhost:3000](http://localhost:3000)\n`;
+
+  return instructions;
 }

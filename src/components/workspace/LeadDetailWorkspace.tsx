@@ -15,7 +15,11 @@ import {
   ChevronUp,
   Link2,
   Send,
+  AlertCircle,
+  RefreshCw,
+  Trash2,
 } from 'lucide-react';
+import { createClient } from '@/utils/supabase/client';
 import { useProjectStore } from '@/store/projectStore';
 import type { Lead } from '@/types/database';
 import { useCanvasBackground } from '@/hooks/useCanvasBackground';
@@ -29,6 +33,11 @@ export default function LeadDetailWorkspace({ leadId }: LeadDetailWorkspaceProps
     artifacts,
     setCanvasState,
     updateLeadStatus,
+    project,
+    startTool,
+    updateToolStage,
+    completeTool,
+    failTool,
   } = useProjectStore();
   const { isDark } = useCanvasBackground();
 
@@ -41,6 +50,11 @@ export default function LeadDetailWorkspace({ leadId }: LeadDetailWorkspaceProps
   const [sendDropdownOpen, setSendDropdownOpen] = useState(false);
   const [iframeLoading, setIframeLoading] = useState(true);
   const [iframeError, setIframeError] = useState(false);
+  const [generatingWebsite, setGeneratingWebsite] = useState(false);
+  const [websiteError, setWebsiteError] = useState<string | null>(null);
+  const [websiteProgress, setWebsiteProgress] = useState<{
+    stages: Array<{ id: string; message: string; status: 'pending' | 'active' | 'complete' }>;
+  } | null>(null);
 
   // Styling
   const bgPrimary = isDark ? 'bg-neutral-950' : 'bg-white';
@@ -98,6 +112,174 @@ export default function LeadDetailWorkspace({ leadId }: LeadDetailWorkspaceProps
     setSendDropdownOpen(false);
   };
 
+  // Handle redo website (regenerate)
+  const handleRedoWebsite = () => {
+    handleGenerateImprovedWebsite();
+  };
+
+  // Handle delete website
+  const handleDeleteWebsite = async () => {
+    if (!lead?.id || !project?.id) return;
+    if (!confirm(`Delete the website preview for ${lead.companyName}? This cannot be undone.`)) return;
+
+    try {
+      const supabase = createClient();
+
+      // Delete website_code artifact
+      await (supabase.from('artifacts') as any)
+        .delete()
+        .eq('project_id', project.id)
+        .eq('type', 'website_code');
+
+      // Clear the preview token from the lead
+      const updatedLeads = artifacts.leads?.leads.map(l =>
+        l.id === lead.id ? { ...l, previewToken: undefined } : l
+      );
+
+      if (updatedLeads && artifacts.leads) {
+        // Update leads artifact in database
+        await (supabase.from('artifacts') as any)
+          .update({ data: { leads: updatedLeads } })
+          .eq('project_id', project.id)
+          .eq('type', 'leads');
+      }
+
+      // Reload to refresh state
+      window.location.reload();
+    } catch (error) {
+      console.error('Failed to delete website:', error);
+    }
+  };
+
+  // Initialize progress with optimistic stages
+  const initializeProgress = () => {
+    setWebsiteProgress({
+      stages: [
+        { id: 'validation', message: 'Validating inputs...', status: 'active' },
+        { id: 'fetch', message: 'Fetching website content...', status: 'pending' },
+        { id: 'analysis', message: 'Analyzing structure...', status: 'pending' },
+        { id: 'generation', message: 'Generating website...', status: 'pending' },
+        { id: 'database', message: 'Saving preview...', status: 'pending' },
+      ],
+    });
+  };
+
+  // Update stage status based on progress marker
+  const updateStageStatus = (stage: string, message: string) => {
+    setWebsiteProgress(prev => {
+      if (!prev) return prev;
+
+      const stageIndex = prev.stages.findIndex(s => s.id === stage);
+      if (stageIndex === -1) return prev;
+
+      // Update stages array
+      const updatedStages = prev.stages.map((s, idx): typeof s => {
+        if (s.id === stage) {
+          return { ...s, status: 'active' as const, message };
+        }
+        // Mark previous stages as complete
+        if (idx < stageIndex) {
+          return { ...s, status: 'complete' as const };
+        }
+        return s;
+      });
+
+      return { ...prev, stages: updatedStages };
+    });
+  };
+
+  // Handle generate improved website from existing URL
+  const handleGenerateImprovedWebsite = async () => {
+    if (!lead?.website || !lead.id || !project?.id) return;
+
+    const startTime = Date.now();
+    setGeneratingWebsite(true);
+    setWebsiteError(null);
+    initializeProgress();
+
+    // Start tool in global store (shows in chat)
+    startTool('generate_lead_website');
+
+    try {
+      const response = await fetch(`/api/leads/${lead.id}/generate-website`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          industry: lead.industry,
+          businessName: lead.companyName,
+          projectId: project.id,
+          websiteUrl: lead.website, // Pass source website URL
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to start website generation');
+      }
+
+      // Check if streaming is supported
+      if (!response.body) {
+        throw new Error('Streaming not supported');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      // Read stream
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          // Parse SSE message
+          const eventMatch = line.match(/^event: (.+)$/m);
+          const dataMatch = line.match(/^data: (.+)$/m);
+
+          if (!eventMatch || !dataMatch) continue;
+
+          const event = eventMatch[1];
+          const data = JSON.parse(dataMatch[1]);
+
+          if (event === 'progress') {
+            updateStageStatus(data.stage, data.message);
+            // Also update global store for chat display
+            updateToolStage('generate_lead_website', data.message);
+          } else if (event === 'success') {
+            // Mark all stages complete
+            setWebsiteProgress(prev => prev ? {
+              ...prev,
+              stages: prev.stages.map(s => ({ ...s, status: 'complete' })),
+            } : null);
+
+            // Mark complete in global store
+            const duration = `${((Date.now() - startTime) / 1000).toFixed(1)}s`;
+            completeTool('generate_lead_website', duration);
+
+            // Reload to show new preview
+            setTimeout(() => window.location.reload(), 500);
+          } else if (event === 'error') {
+            failTool('generate_lead_website', data.error || 'Generation failed');
+            throw new Error(data.error || 'Generation failed');
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[GenerateWebsite] Error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to generate improved website';
+      failTool('generate_lead_website', errorMessage);
+      setWebsiteError(errorMessage);
+      setWebsiteProgress(null);
+    } finally {
+      setGeneratingWebsite(false);
+    }
+  };
+
   // If lead not found
   if (!lead) {
     return (
@@ -121,87 +303,24 @@ export default function LeadDetailWorkspace({ leadId }: LeadDetailWorkspaceProps
 
   return (
     <div className={`h-full flex flex-col ${bgPrimary}`}>
-      {/* Header */}
-      <div className={`flex items-center justify-between px-4 py-3 border-b ${borderColor} shrink-0`}>
+      {/* Header - Compact */}
+      <div className={`flex items-center px-4 py-2 border-b ${borderColor} shrink-0`}>
         <div className="flex items-center gap-3">
           <button
             onClick={handleBack}
-            className={`p-2 rounded-lg ${isDark ? 'hover:bg-zinc-800' : 'hover:bg-zinc-100'} transition-colors group relative`}
+            className={`p-1.5 rounded-lg ${isDark ? 'hover:bg-zinc-800' : 'hover:bg-zinc-100'} transition-colors group relative`}
             title="Press Escape to go back"
           >
-            <ArrowLeft size={18} className={textSecondary} />
+            <ArrowLeft size={16} className={textSecondary} />
             <span className={`absolute left-full ml-1 px-1.5 py-0.5 text-[10px] font-mono ${isDark ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-100 text-zinc-500'} rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap`}>
               Esc
             </span>
           </button>
-          <div>
-            <h2 className={`font-semibold ${textPrimary}`}>{lead.companyName}</h2>
-            <p className={`text-xs ${textSecondary}`}>{lead.industry}</p>
+          <div className="flex items-center gap-2">
+            <h2 className={`text-sm font-medium ${textPrimary}`}>{lead.companyName}</h2>
+            <span className={`text-xs ${textSecondary}`}>·</span>
+            <span className={`text-xs ${textSecondary}`}>{lead.industry}</span>
           </div>
-        </div>
-
-        {/* Send to Customer Button */}
-        <div className="relative">
-          <button
-            onClick={() => setSendDropdownOpen(!sendDropdownOpen)}
-            disabled={!hasWebsite}
-            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-              hasWebsite
-                ? isDark
-                  ? 'bg-blue-600 hover:bg-blue-500 text-white'
-                  : 'bg-blue-500 hover:bg-blue-600 text-white'
-                : isDark
-                  ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
-                  : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
-            }`}
-          >
-            <Send size={16} />
-            Send to Customer
-            <ChevronDown size={14} />
-          </button>
-
-          {sendDropdownOpen && hasWebsite && (
-            <>
-              <div
-                className="fixed inset-0 z-10"
-                onClick={() => setSendDropdownOpen(false)}
-              />
-              <div className={`absolute right-0 top-full mt-2 z-20 w-56 rounded-lg border ${borderColor} ${isDark ? 'bg-zinc-900' : 'bg-white'} shadow-lg py-1`}>
-                <button
-                  onClick={handleCopyPreviewLink}
-                  className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm ${isDark ? 'hover:bg-zinc-800' : 'hover:bg-zinc-50'} transition-colors`}
-                >
-                  {copied === 'preview-link' ? (
-                    <Check size={16} className="text-green-500" />
-                  ) : (
-                    <Link2 size={16} className={textSecondary} />
-                  )}
-                  <span className={textPrimary}>
-                    {copied === 'preview-link' ? 'Copied!' : 'Copy Preview Link'}
-                  </span>
-                </button>
-                <button
-                  onClick={handleOpenEmailComposer}
-                  disabled={!lead.contactEmail}
-                  className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm ${isDark ? 'hover:bg-zinc-800' : 'hover:bg-zinc-50'} transition-colors disabled:opacity-50`}
-                >
-                  <Mail size={16} className={textSecondary} />
-                  <span className={textPrimary}>Open Email Composer</span>
-                </button>
-                {previewUrl && (
-                  <a
-                    href={previewUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm ${isDark ? 'hover:bg-zinc-800' : 'hover:bg-zinc-50'} transition-colors`}
-                  >
-                    <ExternalLink size={16} className={textSecondary} />
-                    <span className={textPrimary}>Open Preview in New Tab</span>
-                  </a>
-                )}
-              </div>
-            </>
-          )}
         </div>
       </div>
 
@@ -211,21 +330,107 @@ export default function LeadDetailWorkspace({ leadId }: LeadDetailWorkspaceProps
         <div className="flex-1 overflow-hidden">
           {hasWebsite ? (
             <div className="h-full flex flex-col">
-              {/* Browser Chrome */}
-              <div className={`flex items-center gap-3 px-4 py-2 border-b ${borderColor} ${bgSecondary}`}>
+              {/* Browser Chrome with Actions */}
+              <div className={`flex items-center gap-2 px-4 py-2 border-b ${borderColor} ${bgSecondary}`}>
+                {/* Traffic lights */}
                 <div className="flex gap-1.5">
                   <div className="w-2.5 h-2.5 rounded-full bg-red-400" />
                   <div className="w-2.5 h-2.5 rounded-full bg-yellow-400" />
                   <div className="w-2.5 h-2.5 rounded-full bg-green-400" />
                 </div>
+
+                {/* URL bar */}
                 <div className={`flex-1 px-3 py-1 rounded text-xs ${isDark ? 'bg-zinc-800 text-zinc-400' : 'bg-white text-zinc-500'} truncate`}>
                   {window.location.origin}{previewUrl}
                 </div>
+
+                {/* Action Buttons */}
+                {/* Redo Website */}
+                <button
+                  onClick={handleRedoWebsite}
+                  disabled={generatingWebsite}
+                  title="Regenerate website"
+                  className={`p-1.5 rounded ${isDark ? 'hover:bg-zinc-700' : 'hover:bg-zinc-200'} transition-colors disabled:opacity-50`}
+                >
+                  <RefreshCw size={14} className={`${textSecondary} ${generatingWebsite ? 'animate-spin' : ''}`} />
+                </button>
+
+                {/* Delete Website */}
+                <button
+                  onClick={handleDeleteWebsite}
+                  title="Delete website"
+                  className={`p-1.5 rounded ${isDark ? 'hover:bg-zinc-700 hover:text-red-400' : 'hover:bg-zinc-200 hover:text-red-500'} transition-colors`}
+                >
+                  <Trash2 size={14} className={textSecondary} />
+                </button>
+
+                {/* Divider */}
+                <div className={`w-px h-4 ${isDark ? 'bg-zinc-700' : 'bg-zinc-300'}`} />
+
+                {/* Send to Customer Dropdown */}
+                <div className="relative">
+                  <button
+                    onClick={() => setSendDropdownOpen(!sendDropdownOpen)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded transition-colors ${
+                      isDark
+                        ? 'bg-zinc-800 hover:bg-zinc-700 text-white'
+                        : 'bg-white hover:bg-zinc-100 text-zinc-900 border border-zinc-200'
+                    }`}
+                  >
+                    <Send size={12} />
+                    Send
+                    <ChevronDown size={12} />
+                  </button>
+
+                  {sendDropdownOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-10"
+                        onClick={() => setSendDropdownOpen(false)}
+                      />
+                      <div className={`absolute right-0 top-full mt-2 z-20 w-56 rounded-lg border ${borderColor} ${isDark ? 'bg-zinc-900' : 'bg-white'} shadow-lg py-1`}>
+                        <button
+                          onClick={handleCopyPreviewLink}
+                          className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm ${isDark ? 'hover:bg-zinc-800' : 'hover:bg-zinc-50'} transition-colors`}
+                        >
+                          {copied === 'preview-link' ? (
+                            <Check size={16} className="text-green-500" />
+                          ) : (
+                            <Link2 size={16} className={textSecondary} />
+                          )}
+                          <span className={textPrimary}>
+                            {copied === 'preview-link' ? 'Copied!' : 'Copy Preview Link'}
+                          </span>
+                        </button>
+                        <button
+                          onClick={handleOpenEmailComposer}
+                          disabled={!lead.contactEmail}
+                          className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm ${isDark ? 'hover:bg-zinc-800' : 'hover:bg-zinc-50'} transition-colors disabled:opacity-50`}
+                        >
+                          <Mail size={16} className={textSecondary} />
+                          <span className={textPrimary}>Open Email Composer</span>
+                        </button>
+                        <a
+                          href={previewUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm ${isDark ? 'hover:bg-zinc-800' : 'hover:bg-zinc-50'} transition-colors`}
+                        >
+                          <ExternalLink size={16} className={textSecondary} />
+                          <span className={textPrimary}>Open in New Tab</span>
+                        </a>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* External link (quick access) */}
                 <a
                   href={previewUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className={`p-1 rounded ${isDark ? 'hover:bg-zinc-700' : 'hover:bg-zinc-200'} transition-colors`}
+                  className={`p-1.5 rounded ${isDark ? 'hover:bg-zinc-700' : 'hover:bg-zinc-200'} transition-colors`}
+                  title="Open in new tab"
                 >
                   <ExternalLink size={14} className={textSecondary} />
                 </a>
@@ -284,13 +489,104 @@ export default function LeadDetailWorkspace({ leadId }: LeadDetailWorkspaceProps
                 </div>
                 <h3 className={`text-lg font-semibold ${textPrimary} mb-2`}>No Website Preview Yet</h3>
                 <p className={`text-sm ${textSecondary} mb-4`}>
-                  Generate a website preview for this lead to send them a personalized demo.
+                  {lead.website
+                    ? 'Generate an improved version of their website to send them a personalized demo.'
+                    : 'Generate a website preview for this lead to send them a personalized demo.'}
                 </p>
-                <button
-                  className={`px-4 py-2 text-sm font-medium ${isDark ? 'bg-blue-600 hover:bg-blue-500' : 'bg-blue-500 hover:bg-blue-600'} text-white rounded-lg transition-colors`}
-                >
-                  Generate Website Preview
-                </button>
+
+                {websiteProgress && (
+                  <div className={`mb-4 p-4 rounded-lg ${isDark ? 'bg-zinc-800 border border-zinc-700' : 'bg-zinc-100 border border-zinc-200'}`}>
+                    <div className="space-y-3">
+                      {websiteProgress.stages.map(stage => (
+                        <div key={stage.id} className="flex items-center gap-2">
+                          {stage.status === 'complete' && (
+                            <Loader2 size={14} className="text-green-500 flex-shrink-0" />
+                          )}
+                          {stage.status === 'active' && (
+                            <Loader2 size={14} className="animate-spin text-blue-500 flex-shrink-0" />
+                          )}
+                          {stage.status === 'pending' && (
+                            <div className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                          )}
+                          <span className={`text-sm ${
+                            stage.status === 'complete' ? `${isDark ? 'text-zinc-300' : 'text-zinc-600'}` :
+                            stage.status === 'active' ? `${isDark ? 'text-blue-300 font-medium' : 'text-blue-600 font-medium'}` :
+                            `${isDark ? 'text-zinc-500' : 'text-zinc-400'}`
+                          }`}>
+                            {stage.message}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {websiteError && (
+                  <div className={`mb-4 p-4 rounded-lg ${isDark ? 'bg-red-900/20 border border-red-800' : 'bg-red-50 border border-red-200'}`}>
+                    <div className="flex items-start gap-3">
+                      <AlertCircle size={20} className="text-red-500 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <h4 className={`text-sm font-semibold mb-1 ${isDark ? 'text-red-400' : 'text-red-700'}`}>
+                          Website Generation Failed
+                        </h4>
+                        <p className={`text-sm mb-3 ${isDark ? 'text-red-300' : 'text-red-600'}`}>
+                          {websiteError}
+                        </p>
+
+                        {/* Recovery tips based on error type */}
+                        {websiteError.includes('timeout') && (
+                          <p className={`text-xs mb-3 ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                            💡 Try generating without the URL to skip website analysis
+                          </p>
+                        )}
+                        {websiteError.includes('rate limit') && (
+                          <p className={`text-xs mb-3 ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                            💡 The AI service is busy. Wait 1-2 minutes before retrying
+                          </p>
+                        )}
+                        {websiteError.includes('not found') && (
+                          <p className={`text-xs mb-3 ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                            💡 Double-check the website URL in the lead details
+                          </p>
+                        )}
+                        {websiteError.includes('SSL') && (
+                          <p className={`text-xs mb-3 ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                            💡 This website may have security certificate issues
+                          </p>
+                        )}
+
+                        <button
+                          onClick={() => {
+                            setWebsiteError(null);
+                            handleGenerateImprovedWebsite();
+                          }}
+                          className={`px-4 py-2 text-sm font-medium rounded-lg ${isDark ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-red-500 hover:bg-red-600 text-white'}`}
+                        >
+                          Try Again
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {lead.website && (
+                  <button
+                    onClick={handleGenerateImprovedWebsite}
+                    disabled={generatingWebsite}
+                    className={`px-4 py-2 text-sm font-medium flex items-center justify-center gap-2 rounded-lg transition-colors mx-auto ${
+                      generatingWebsite
+                        ? isDark
+                          ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed'
+                          : 'bg-zinc-300 text-zinc-500 cursor-not-allowed'
+                        : isDark
+                          ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                          : 'bg-blue-500 hover:bg-blue-600 text-white'
+                    }`}
+                  >
+                    {generatingWebsite && <Loader2 size={16} className="animate-spin" />}
+                    {generatingWebsite ? 'Generating...' : 'Generate Improved Website'}
+                  </button>
+                )}
               </div>
             </div>
           )}

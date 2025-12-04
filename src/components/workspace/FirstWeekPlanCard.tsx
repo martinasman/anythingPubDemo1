@@ -15,7 +15,7 @@ export default function FirstWeekPlanCard({ plan, isLoading, onTaskToggle, isDar
   const [expandedDay, setExpandedDay] = useState<number | null>(1); // Default Day 1 open
 
   // Dynamic styling based on background
-  const cardBg = isDark ? 'bg-zinc-900/80 backdrop-blur-sm' : 'bg-white/90 backdrop-blur-sm';
+  const cardBg = 'backdrop-blur-sm border border-zinc-800/30 dark:border-zinc-200/10';
   const textPrimary = isDark ? 'text-white' : 'text-zinc-900';
   const textSecondary = isDark ? 'text-zinc-400' : 'text-zinc-600';
   const borderColor = isDark ? 'border-zinc-700' : 'border-zinc-200';

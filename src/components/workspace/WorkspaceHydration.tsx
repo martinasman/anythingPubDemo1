@@ -39,14 +39,20 @@ export default function WorkspaceHydration({
   useEffect(() => {
     console.log('[WorkspaceHydration] Checking auto-submit', { initialPrompt, messagesLength: initialMessages.length });
     if (initialPrompt && initialMessages.length === 0) {
-      // Dispatch on next frame to ensure ChatPanel has mounted
-      requestAnimationFrame(() => {
+      // Delay to ensure ChatPanel has mounted and listener is ready
+      const timer = setTimeout(() => {
         console.log('[WorkspaceHydration] Dispatching autoSubmitPrompt event with:', initialPrompt);
+
+        // Mark generation as started so LoadingCanvas shows immediately
+        useProjectStore.getState().setHasStartedGeneration(true);
+
         const event = new CustomEvent('autoSubmitPrompt', {
           detail: { prompt: initialPrompt },
         });
         window.dispatchEvent(event);
-      });
+      }, 100);
+
+      return () => clearTimeout(timer);
     }
   }, [initialPrompt, initialMessages.length]);
 
@@ -83,8 +89,8 @@ export default function WorkspaceHydration({
             }
 
             // Validate artifact type
-            const validTypes: Array<'website_code' | 'identity' | 'market_research' | 'business_plan' | 'leads' | 'outreach'> = [
-              'website_code', 'identity', 'market_research', 'business_plan', 'leads', 'outreach'
+            const validTypes: Array<'website_code' | 'identity' | 'ads' | 'market_research' | 'business_plan' | 'leads' | 'outreach' | 'first_week_plan' | 'crm'> = [
+              'website_code', 'identity', 'ads', 'market_research', 'business_plan', 'leads', 'outreach', 'first_week_plan', 'crm'
             ];
             if (!validTypes.includes(artifact.type as any)) {
               console.error('[Realtime] Unknown artifact type:', artifact.type);

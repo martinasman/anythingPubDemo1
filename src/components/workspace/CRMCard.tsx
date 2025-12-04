@@ -90,9 +90,9 @@ export default function CRMCard({
         </p>
         <button
           onClick={onGenerateLeads}
-          className="flex items-center gap-2 px-6 py-3 btn-primary font-semibold rounded-xl transition-colors"
+          className="flex items-center gap-2 px-4 py-2 text-sm btn-primary font-semibold rounded-xl transition-colors"
         >
-          <Target size={20} />
+          <Target size={16} />
           Generate 10 Leads
         </button>
       </div>

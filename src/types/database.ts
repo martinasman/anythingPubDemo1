@@ -8,9 +8,25 @@ export type WebsiteArtifact = {
   files: Array<{
     path: string;
     content: string;
-    type: 'html' | 'css' | 'js' | 'json';
+    type: 'html' | 'css' | 'js' | 'json' | 'tsx' | 'ts' | 'jsx' | 'sql' | 'env' | 'md';
   }>;
-  primaryPage: string; // e.g., '/index.html'
+  primaryPage: string; // e.g., '/index.html' or '/app/page.tsx'
+
+  // NEW FIELDS FOR FULL-STACK APPS
+  appType?: 'html' | 'nextjs';
+  metadata?: {
+    patterns?: string[];
+    envVars?: {
+      required: string[];
+      optional: string[];
+    };
+    setupInstructions?: string;
+    dependencies?: string[];
+    // Remix metadata (when site was remixed from existing)
+    remixedFrom?: string;
+    crawledAt?: string;
+    originalPageCount?: number;
+  };
 };
 
 export type IdentityArtifact = {
@@ -23,6 +39,18 @@ export type IdentityArtifact = {
   };
   font: string;
   tagline?: string;
+};
+
+export type AdsArtifact = {
+  ads: Array<{
+    id: string;
+    imageUrl: string;
+    headline: string;
+    bodyText: string;
+    cta: string;
+    platform: 'facebook' | 'instagram' | 'google' | 'linkedin' | 'tiktok';
+    format: 'square' | 'story' | 'landscape';
+  }>;
 };
 
 export type ExtractedCompetitor = {
@@ -343,6 +371,75 @@ export type LeadWebsiteArtifact = {
     type: 'html' | 'css' | 'js' | 'json';
   }>;
   expiresAt: string;
+  designStyle?: string; // Track selected style for anti-repetition
+  sourceUrl?: string; // Track if improved from existing site
+};
+
+// Lead websites artifact (container for multiple websites per project)
+export type LeadWebsitesArtifact = {
+  websites: LeadWebsiteArtifact[];
+};
+
+// Crawled site data artifact (for website remix feature)
+export type CrawledSiteArtifact = {
+  sourceUrl: string;
+  crawledAt: string;
+  site: {
+    domain: string;
+    pages: Array<{
+      url: string;
+      path: string;
+      title: string;
+      content: {
+        headings: Array<{ level: number; text: string }>;
+        paragraphs: string[];
+      };
+      forms: Array<{
+        formType: string;
+        fields: Array<{
+          type: string;
+          name: string;
+          label?: string;
+          required: boolean;
+        }>;
+        submitText: string;
+      }>;
+      images: Array<{
+        src: string;
+        alt?: string;
+        isLogo: boolean;
+        isHero: boolean;
+      }>;
+    }>;
+    brand: {
+      logo?: string;
+      companyName?: string;
+      colors: {
+        primary?: string;
+        secondary?: string;
+        accent?: string;
+      };
+    };
+    navigation: Array<{
+      label: string;
+      path: string;
+    }>;
+    globalElements: {
+      socialLinks: Array<{ platform: string; url: string }>;
+      contactInfo: {
+        phone?: string;
+        email?: string;
+        address?: string;
+      };
+    };
+    stats: {
+      totalPages: number;
+      totalImages: number;
+      totalForms: number;
+    };
+  };
+  status: 'completed' | 'failed';
+  error?: string;
 };
 
 // Activity tracking for leads
@@ -370,17 +467,37 @@ export type LeadActivity = {
 export type ArtifactData =
   | WebsiteArtifact
   | IdentityArtifact
+  | AdsArtifact
   | ResearchArtifact
   | BusinessPlanArtifact
   | LeadsArtifact
   | OutreachArtifact
   | FirstWeekPlanArtifact
   | LongTermPlanArtifact
-  | LeadWebsiteArtifact;
+  | LeadWebsitesArtifact
+  | CRMArtifact
+  | CrawledSiteArtifact;
 
 // ============================================
 // DATABASE TABLE TYPES
 // ============================================
+
+export type BusinessModeId = 'agency' | 'commerce' | 'playground';
+
+export type AgencyModeData = {
+  agencyType: 'web-design' | 'smma' | 'ai-automation' | 'consulting' | 'custom';
+  description: string;
+  targetMarket: string;
+};
+
+export type CommerceModeData = {
+  entryPoint: 'product-url' | 'discover' | 'manual';
+  productUrl?: string;
+  productDescription?: string;
+  niche?: string;
+};
+
+export type ModeData = AgencyModeData | CommerceModeData | Record<string, unknown>;
 
 export type Project = {
   id: string;
@@ -389,6 +506,8 @@ export type Project = {
   description: string | null;
   status: 'active' | 'archived' | 'completed';
   model_id?: string;
+  mode?: BusinessModeId;
+  mode_data?: ModeData;
   created_at: string;
   updated_at: string;
 };
@@ -396,13 +515,19 @@ export type Project = {
 export type ArtifactType =
   | 'website_code'
   | 'identity'
+  | 'ads'
   | 'market_research'
   | 'business_plan'
   | 'leads'
   | 'outreach'
   | 'first_week_plan'
   | 'long_term_plan'
-  | 'lead_website';
+  | 'lead_website'
+  | 'crm'
+  | 'contracts'
+  | 'client_work'
+  | 'administration'
+  | 'crawled_site';
 
 export type Artifact = {
   id: string;
@@ -535,6 +660,10 @@ export function isIdentityArtifact(data: ArtifactData): data is IdentityArtifact
   return 'logoUrl' in data && 'colors' in data && 'font' in data;
 }
 
+export function isAdsArtifact(data: ArtifactData): data is AdsArtifact {
+  return 'ads' in data && Array.isArray((data as AdsArtifact).ads);
+}
+
 export function isResearchArtifact(data: ArtifactData): data is ResearchArtifact {
   return 'competitors' in data && 'marketSummary' in data;
 }
@@ -559,8 +688,12 @@ export function isLongTermPlanArtifact(data: ArtifactData): data is LongTermPlan
   return 'monthlyMilestones' in data && 'scalingStrategy' in data && 'yearOneProjection' in data;
 }
 
-export function isLeadWebsiteArtifact(data: ArtifactData): data is LeadWebsiteArtifact {
-  return 'leadId' in data && 'previewToken' in data && 'files' in data;
+export function isLeadWebsitesArtifact(data: ArtifactData): data is LeadWebsitesArtifact {
+  return 'websites' in data && Array.isArray((data as LeadWebsitesArtifact).websites);
+}
+
+export function isCrawledSiteArtifact(data: ArtifactData): data is CrawledSiteArtifact {
+  return 'site' in data && 'sourceUrl' in data && 'crawledAt' in data;
 }
 
 // ============================================
@@ -641,5 +774,192 @@ export function leadToLeadRow(lead: Lead, projectId: string): Omit<LeadRow, 'id'
     preview_token: lead.previewToken || null,
     outreach_generated: lead.outreachGenerated || false,
     outreach_data: lead.outreachData || null,
+  };
+}
+
+// ============================================
+// CRM TYPES (BUSINESS OS - CLIENT NODE)
+// ============================================
+
+export type ClientRow = {
+  id: string;
+  project_id: string;
+  company_name: string;
+  industry: string | null;
+  primary_contact_name: string | null;
+  primary_contact_email: string | null;
+  primary_contact_phone: string | null;
+  primary_contact_title: string | null;
+  billing_address: string | null;
+  shipping_address: string | null;
+  website: string | null;
+  tax_id: string | null;
+  payment_terms: number;
+  currency: string;
+  status: 'prospect' | 'active' | 'onboarding' | 'paused' | 'churned' | 'archived';
+  lifetime_value: number;
+  total_invoiced: number;
+  total_paid: number;
+  outstanding_balance: number;
+  source: string | null;
+  lead_id: string | null;
+  acquisition_date: string | null;
+  first_project_date: string | null;
+  last_invoice_date: string | null;
+  notes: string | null;
+  tags: string[] | null;
+  created_at: string;
+  updated_at: string;
+  created_by: string | null;
+};
+
+export type Client = {
+  id: string;
+  projectId: string;
+  companyName: string;
+  industry?: string;
+  primaryContact: {
+    name?: string;
+    email?: string;
+    phone?: string;
+    title?: string;
+  };
+  billingAddress?: string;
+  shippingAddress?: string;
+  website?: string;
+  taxId?: string;
+  paymentTerms: number;
+  currency: string;
+  status: 'prospect' | 'active' | 'onboarding' | 'paused' | 'churned' | 'archived';
+  financialMetrics: {
+    lifetimeValue: number;
+    totalInvoiced: number;
+    totalPaid: number;
+    outstandingBalance: number;
+  };
+  source?: string;
+  convertedFromLeadId?: string;
+  acquisitionDate?: string;
+  firstProjectDate?: string;
+  lastInvoiceDate?: string;
+  notes?: string;
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+};
+
+export type ClientActivity = {
+  id: string;
+  projectId: string;
+  clientId: string;
+  type: 'note_added' | 'status_changed' | 'email_sent' | 'call_made' | 'meeting_held' | 'contract_signed' | 'invoice_sent' | 'payment_received' | 'project_started' | 'deliverable_sent' | 'feedback_received';
+  content?: string;
+  metadata?: Record<string, any>;
+  relatedContractId?: string;
+  relatedInvoiceId?: string;
+  relatedProjectId?: string;
+  userName?: string;
+  createdAt: string;
+};
+
+export type CRMArtifact = {
+  clients: Array<{
+    id: string;
+    companyName: string;
+    industry?: string;
+    status: 'prospect' | 'active' | 'onboarding' | 'paused' | 'churned' | 'archived';
+    primaryContact: {
+      name?: string;
+      email?: string;
+      phone?: string;
+      title?: string;
+    };
+    financialMetrics: {
+      lifetimeValue: number;
+      totalInvoiced: number;
+      totalPaid: number;
+      outstandingBalance: number;
+    };
+    activeProjects: number;
+    lastActivityDate?: string;
+    tags: string[];
+  }>;
+  metrics: {
+    totalClients: number;
+    activeClients: number;
+    pipelineValue: number;
+  };
+  recentActivities: ClientActivity[];
+};
+
+// Convert ClientRow to Client type
+export function clientRowToClient(row: ClientRow): Client {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    companyName: row.company_name,
+    industry: row.industry || undefined,
+    primaryContact: {
+      name: row.primary_contact_name || undefined,
+      email: row.primary_contact_email || undefined,
+      phone: row.primary_contact_phone || undefined,
+      title: row.primary_contact_title || undefined,
+    },
+    billingAddress: row.billing_address || undefined,
+    shippingAddress: row.shipping_address || undefined,
+    website: row.website || undefined,
+    taxId: row.tax_id || undefined,
+    paymentTerms: row.payment_terms,
+    currency: row.currency,
+    status: row.status,
+    financialMetrics: {
+      lifetimeValue: row.lifetime_value,
+      totalInvoiced: row.total_invoiced,
+      totalPaid: row.total_paid,
+      outstandingBalance: row.outstanding_balance,
+    },
+    source: row.source || undefined,
+    convertedFromLeadId: row.lead_id || undefined,
+    acquisitionDate: row.acquisition_date || undefined,
+    firstProjectDate: row.first_project_date || undefined,
+    lastInvoiceDate: row.last_invoice_date || undefined,
+    notes: row.notes || undefined,
+    tags: row.tags || [],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    createdBy: row.created_by || undefined,
+  };
+}
+
+// Convert Client type to database row format
+export function clientToClientRow(client: Client, projectId: string): Omit<ClientRow, 'id' | 'created_at' | 'updated_at'> {
+  return {
+    project_id: projectId,
+    company_name: client.companyName,
+    industry: client.industry || null,
+    primary_contact_name: client.primaryContact.name || null,
+    primary_contact_email: client.primaryContact.email || null,
+    primary_contact_phone: client.primaryContact.phone || null,
+    primary_contact_title: client.primaryContact.title || null,
+    billing_address: client.billingAddress || null,
+    shipping_address: client.shippingAddress || null,
+    website: client.website || null,
+    tax_id: client.taxId || null,
+    payment_terms: client.paymentTerms,
+    currency: client.currency,
+    status: client.status,
+    lifetime_value: client.financialMetrics.lifetimeValue,
+    total_invoiced: client.financialMetrics.totalInvoiced,
+    total_paid: client.financialMetrics.totalPaid,
+    outstanding_balance: client.financialMetrics.outstandingBalance,
+    source: client.source || null,
+    lead_id: client.convertedFromLeadId || null,
+    acquisition_date: client.acquisitionDate || null,
+    first_project_date: client.firstProjectDate || null,
+    last_invoice_date: client.lastInvoiceDate || null,
+    notes: client.notes || null,
+    tags: client.tags || null,
+    created_by: client.createdBy || null,
   };
 }

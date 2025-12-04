@@ -6,6 +6,7 @@ import type {
   ArtifactType,
   WebsiteArtifact,
   IdentityArtifact,
+  AdsArtifact,
   ResearchArtifact,
   BusinessPlanArtifact,
   LeadsArtifact,
@@ -13,6 +14,7 @@ import type {
   FirstWeekPlanArtifact,
   Lead,
   LeadActivity,
+  CRMArtifact,
 } from '@/types/database';
 
 // ============================================
@@ -22,15 +24,18 @@ import type {
 type ToolType = 'research' | 'identity' | 'website' | 'businessplan' | 'leads' | 'outreach' | 'firstweekplan';
 type EditorMode = 'bento' | 'website' | 'leads' | 'outreach';
 type ContextView = 'overview' | 'identity' | 'offer' | 'funnel' | 'leads' | 'legal';
-export type WorkspaceView = 'HOME' | 'BRAND' | 'CRM' | 'SITE' | 'FINANCE';
+export type WorkspaceView = 'HOME' | 'BRAND' | 'CRM' | 'SITE' | 'FINANCE' | 'ADS';
 
 // Canvas state types for loading/overview system
 export type CanvasState =
   | { type: 'empty' }
   | { type: 'loading' }
   | { type: 'overview' }
-  | { type: 'detail'; view: 'website' | 'brand' | 'offer' | 'plan' | 'leads' }
-  | { type: 'lead-detail'; leadId: string };
+  | { type: 'detail'; view: 'website' | 'brand' | 'offer' | 'plan' | 'leads' | 'clients' | 'ads' }
+  | { type: 'lead-detail'; leadId: string }
+  // Remix-specific states
+  | { type: 'remix-crawling'; url: string; pagesDiscovered: number; pagesCrawled: number; currentPage: string }
+  | { type: 'remix-generating'; currentPage: number; totalPages: number; pageName: string };
 
 export interface ToolStatus {
   name: string;
@@ -40,6 +45,7 @@ export interface ToolStatus {
   completedAt?: number;
   duration?: string;
   currentStage?: string; // Current stage message for dynamic progress
+  errorMessage?: string; // Error details for failed tools
 }
 
 // Tool display names for loading canvas
@@ -51,9 +57,12 @@ export const TOOL_DISPLAY_NAMES: Record<string, string> = {
   'generate_first_week_plan': 'Planning your first week',
   'generate_leads': 'Finding prospects',
   'generate_outreach_scripts': 'Writing outreach scripts',
+  'generate_ads': 'Creating ad campaigns',
+  'generate_lead_website': 'Generating website preview',
   'edit_website': 'Updating your website',
   'edit_identity': 'Updating your brand',
   'edit_pricing': 'Updating your pricing',
+  'remix_website': 'Remixing website',
 };
 
 interface ProjectState {
@@ -63,11 +72,13 @@ interface ProjectState {
   artifacts: {
     website: WebsiteArtifact | null;
     identity: IdentityArtifact | null;
+    ads: AdsArtifact | null;
     research: ResearchArtifact | null;
     businessPlan: BusinessPlanArtifact | null;
     leads: LeadsArtifact | null;
     outreach: OutreachArtifact | null;
     firstWeekPlan: FirstWeekPlanArtifact | null;
+    crm: CRMArtifact | null;
   };
   selectedModelId: string;
 
@@ -120,6 +131,7 @@ interface ProjectState {
   completeTool: (toolName: string, duration?: string) => void;
   failTool: (toolName: string, errorMessage: string) => void;
   resetTools: () => void;
+  retryGeneration: (artifactType: 'identity' | 'website' | 'businessPlan' | 'leads' | 'outreach') => Promise<void>;
 
   // Artifact refresh action (fallback for when realtime doesn't fire)
   refreshArtifact: (type: ArtifactType) => Promise<void>;
@@ -136,11 +148,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   artifacts: {
     website: null,
     identity: null,
+    ads: null,
     research: null,
     businessPlan: null,
     leads: null,
     outreach: null,
     firstWeekPlan: null,
+    crm: null,
   },
   selectedModelId: 'anthropic/claude-3.5-sonnet',
   isLoading: false,
@@ -160,11 +174,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const artifacts = {
       website: null as WebsiteArtifact | null,
       identity: null as IdentityArtifact | null,
+      ads: null as AdsArtifact | null,
       research: null as ResearchArtifact | null,
       businessPlan: null as BusinessPlanArtifact | null,
       leads: null as LeadsArtifact | null,
       outreach: null as OutreachArtifact | null,
       firstWeekPlan: null as FirstWeekPlanArtifact | null,
+      crm: null as CRMArtifact | null,
     };
 
     // Parse raw artifacts into typed state
@@ -176,6 +192,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       } else if (artifact.type === 'identity') {
         artifacts.identity = artifact.data as IdentityArtifact;
         console.log('[Store] Loaded identity artifact');
+      } else if (artifact.type === 'ads') {
+        artifacts.ads = artifact.data as AdsArtifact;
+        console.log('[Store] Loaded ads artifact');
       } else if (artifact.type === 'market_research') {
         artifacts.research = artifact.data as ResearchArtifact;
         console.log('[Store] Loaded research artifact');
@@ -191,6 +210,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       } else if (artifact.type === 'first_week_plan') {
         artifacts.firstWeekPlan = artifact.data as FirstWeekPlanArtifact;
         console.log('[Store] Loaded first week plan artifact');
+      } else if (artifact.type === 'crm') {
+        artifacts.crm = artifact.data as CRMArtifact;
+        console.log('[Store] Loaded CRM artifact');
       }
     });
 
@@ -285,6 +307,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           tagline: identityData.tagline,
         });
         newArtifacts.identity = identityData;
+      } else if (type === 'ads') {
+        console.log('[Store] Updating ads artifact');
+        newArtifacts.ads = artifact.data as AdsArtifact;
       } else if (type === 'market_research') {
         console.log('[Store] Updating research artifact');
         newArtifacts.research = artifact.data as ResearchArtifact;
@@ -300,6 +325,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       } else if (type === 'first_week_plan') {
         console.log('[Store] Updating first week plan artifact');
         newArtifacts.firstWeekPlan = artifact.data as FirstWeekPlanArtifact;
+      } else if (type === 'crm') {
+        console.log('[Store] Updating CRM artifact');
+        newArtifacts.crm = artifact.data as CRMArtifact;
       } else {
         console.error('[Store] Unknown artifact type:', type);
         return state; // Don't update state for unknown types
@@ -347,11 +375,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       artifacts: {
         website: null,
         identity: null,
+        ads: null,
         research: null,
         businessPlan: null,
         leads: null,
         outreach: null,
         firstWeekPlan: null,
+        crm: null,
       },
       selectedModelId: 'anthropic/claude-3.5-sonnet',
       isLoading: false,
@@ -564,11 +594,58 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         newToolStatuses.set(toolName, {
           ...tool,
           status: 'error',
+          errorMessage,
           completedAt: Date.now(),
         });
       }
       return { toolStatuses: newToolStatuses };
     });
+  },
+
+  retryGeneration: async (artifactType) => {
+    const state = get();
+    const { project, messages } = state;
+
+    if (!project) {
+      console.error('[Store] retryGeneration: No project');
+      return;
+    }
+
+    const retryMessages: Record<string, string> = {
+      identity: 'Please regenerate the brand identity. The previous attempt failed.',
+      website: 'Please regenerate the website. The previous attempt failed.',
+      businessPlan: 'Please regenerate the business plan. The previous attempt failed.',
+      leads: 'Please regenerate the leads list. The previous attempt failed.',
+      outreach: 'Please regenerate the outreach scripts. The previous attempt failed.',
+    };
+
+    const retryMessage = retryMessages[artifactType];
+    if (!retryMessage) {
+      console.error('[Store] retryGeneration: Unknown artifact type:', artifactType);
+      return;
+    }
+
+    try {
+      console.log('[Store] retryGeneration:', artifactType);
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: project.id,
+          message: retryMessage,
+          conversationHistory: messages.map(m => ({
+            role: m.role,
+            content: m.content
+          }))
+        })
+      });
+
+      if (!response.ok) {
+        console.error('[Store] retryGeneration failed:', response.status);
+      }
+    } catch (error) {
+      console.error('[Store] retryGeneration error:', error);
+    }
   },
 
   refreshArtifact: async (type) => {

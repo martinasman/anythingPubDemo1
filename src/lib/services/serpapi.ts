@@ -8,6 +8,39 @@
 import { tavily } from '@tavily/core';
 
 // ============================================
+// URL CLEANING HELPER
+// ============================================
+
+/**
+ * Clean Google redirect URLs to extract the actual destination URL
+ * Handles format: /url?q=https://actual-site.com&sa=U&ved=...
+ */
+function cleanGoogleRedirectUrl(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+
+  // Check if it's a Google redirect URL
+  if (url.includes('/url?q=') || url.includes('url?q=')) {
+    try {
+      // Handle both relative and absolute URLs
+      const fullUrl = url.startsWith('http') ? url : `https://google.com${url}`;
+      const urlObj = new URL(fullUrl);
+      const actualUrl = urlObj.searchParams.get('q');
+      if (actualUrl) {
+        return actualUrl;
+      }
+    } catch {
+      // If parsing fails, try regex extraction as fallback
+      const match = url.match(/[?&]q=([^&]+)/);
+      if (match) {
+        return decodeURIComponent(match[1]);
+      }
+    }
+  }
+
+  return url;
+}
+
+// ============================================
 // TYPES
 // ============================================
 
@@ -123,7 +156,7 @@ export async function searchGoogleMapsBusinesses(
         name: result.title,
         address: result.address,
         phone: result.phone,
-        website: result.website,
+        website: cleanGoogleRedirectUrl(result.website),
         rating: result.rating,
         reviewCount: result.reviews,
         type: result.type,
@@ -182,23 +215,12 @@ async function searchWithTavilyFallback(
       // Extract business name from title
       const name = result.title.split(' - ')[0].split(' | ')[0].trim();
 
-      // Extract actual website URL from Google redirect URLs
-      let website = result.url;
-      if (website && website.includes('/url?q=')) {
-        try {
-          const urlParams = new URL(website, 'https://google.com').searchParams;
-          website = urlParams.get('q') || website;
-        } catch {
-          // Keep original URL if parsing fails
-        }
-      }
-
       return {
         placeId: `tavily-${index}-${Date.now()}`,
         name,
         address: location, // Tavily doesn't give structured address
         phone,
-        website,
+        website: cleanGoogleRedirectUrl(result.url),
         rating: undefined,
         reviewCount: undefined,
         type: undefined,

@@ -26,6 +26,7 @@ import {
   TrendingUp,
   Users,
   Calendar,
+  AlertCircle,
 } from 'lucide-react';
 import type { Lead, LeadActivity, WebsiteAnalysis } from '@/types/database';
 import { useProjectStore } from '@/store/projectStore';
@@ -48,12 +49,16 @@ type TabId = 'overview' | 'website' | 'outreach' | 'activity';
 // ============================================
 
 export default function LeadWorkspace({ lead, isOpen, onClose, isDark = true }: LeadWorkspaceProps) {
-  const { addLeadActivity, updateLeadStatus, artifacts } = useProjectStore();
+  const { addLeadActivity, updateLeadStatus, artifacts, project } = useProjectStore();
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   const [isGeneratingWebsite, setIsGeneratingWebsite] = useState(false);
   const [isGeneratingOutreach, setIsGeneratingOutreach] = useState(false);
   const [newNote, setNewNote] = useState('');
   const [copied, setCopied] = useState<string | null>(null);
+  const [websiteError, setWebsiteError] = useState<string | null>(null);
+  const [websiteProgress, setWebsiteProgress] = useState<{
+    stages: Array<{ id: string; message: string; status: 'pending' | 'active' | 'complete' }>;
+  } | null>(null);
 
   // Dynamic styling
   const bgPrimary = isDark ? 'bg-zinc-900' : 'bg-white';
@@ -64,6 +69,38 @@ export default function LeadWorkspace({ lead, isOpen, onClose, isDark = true }: 
 
   if (!isOpen) return null;
 
+  const initializeProgress = () => {
+    setWebsiteProgress({
+      stages: [
+        { id: 'validation', message: 'Validating inputs...', status: 'active' },
+        { id: 'fetch', message: 'Fetching website content...', status: 'pending' },
+        { id: 'analysis', message: 'Analyzing structure...', status: 'pending' },
+        { id: 'generation', message: 'Generating website...', status: 'pending' },
+        { id: 'database', message: 'Saving preview...', status: 'pending' },
+      ],
+    });
+  };
+
+  const updateStageStatus = (stage: string, message: string) => {
+    setWebsiteProgress(prev => {
+      if (!prev) return prev;
+      const stageIndex = prev.stages.findIndex(s => s.id === stage);
+      if (stageIndex === -1) return prev;
+
+      const updatedStages = prev.stages.map((s, idx): typeof s => {
+        if (s.id === stage) {
+          return { ...s, status: 'active' as const, message };
+        }
+        if (idx < stageIndex) {
+          return { ...s, status: 'complete' as const };
+        }
+        return s;
+      });
+
+      return { ...prev, stages: updatedStages };
+    });
+  };
+
   const handleCopy = async (text: string, field: string) => {
     await navigator.clipboard.writeText(text);
     setCopied(field);
@@ -72,7 +109,15 @@ export default function LeadWorkspace({ lead, isOpen, onClose, isDark = true }: 
 
   const handleGenerateWebsite = async () => {
     setIsGeneratingWebsite(true);
+    setWebsiteError(null);
+    initializeProgress();
+
     try {
+      // Get projectId from project store
+      if (!project?.id) {
+        throw new Error('Project ID not found. Please refresh the page.');
+      }
+
       const response = await fetch(`/api/leads/${lead.id}/generate-website`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -80,24 +125,85 @@ export default function LeadWorkspace({ lead, isOpen, onClose, isDark = true }: 
           leadId: lead.id,
           industry: lead.industry,
           businessName: lead.companyName,
+          projectId: project.id,
         }),
       });
 
-      if (!response.ok) throw new Error('Failed to generate website');
+      if (!response.ok) {
+        throw new Error('Failed to start website generation');
+      }
 
-      const data = await response.json();
+      // Check if streaming is supported
+      if (!response.body) {
+        throw new Error('Streaming not supported');
+      }
 
-      await addLeadActivity({
-        leadId: lead.id,
-        type: 'website_generated',
-        content: `Preview website generated`,
-        metadata: { previewToken: data.previewToken, previewUrl: data.previewUrl },
-      });
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let previewToken: string | null = null;
+      let previewUrl: string | null = null;
 
-      // Refresh the page or update state to show new preview
-      window.location.reload();
+      // Read stream
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          // Parse SSE message
+          const eventMatch = line.match(/^event: (.+)$/m);
+          const dataMatch = line.match(/^data: (.+)$/m);
+
+          if (!eventMatch || !dataMatch) continue;
+
+          const event = eventMatch[1];
+          const data = JSON.parse(dataMatch[1]);
+
+          if (event === 'progress') {
+            updateStageStatus(data.stage, data.message);
+          } else if (event === 'success') {
+            previewToken = data.previewToken;
+            previewUrl = data.previewUrl;
+            // Mark all stages complete
+            setWebsiteProgress(prev =>
+              prev
+                ? {
+                    ...prev,
+                    stages: prev.stages.map(s => ({ ...s, status: 'complete' })),
+                  }
+                : null
+            );
+          } else if (event === 'error') {
+            throw new Error(data.error || 'Generation failed');
+          }
+        }
+      }
+
+      if (previewToken && previewUrl) {
+        await addLeadActivity({
+          leadId: lead.id,
+          type: 'website_generated',
+          content: `Preview website generated`,
+          metadata: { previewToken, previewUrl },
+        });
+
+        // Refresh the page or update state to show new preview
+        window.location.reload();
+      }
     } catch (error) {
       console.error('Failed to generate website:', error);
+      setWebsiteError(
+        error instanceof Error
+          ? error.message
+          : 'Failed to generate website. Please try again.'
+      );
+      setWebsiteProgress(null);
     } finally {
       setIsGeneratingWebsite(false);
     }
@@ -163,7 +269,7 @@ export default function LeadWorkspace({ lead, isOpen, onClose, isDark = true }: 
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className={`px-6 py-4 border-b ${borderColor} flex items-center justify-between shrink-0`}>
+        <div className={`px-4 py-2 border-b ${borderColor} flex items-center justify-between shrink-0`}>
           <div className="flex items-center gap-3">
             <div
               className={`w-12 h-12 rounded-xl ${bgSecondary} flex items-center justify-center`}
@@ -229,6 +335,9 @@ export default function LeadWorkspace({ lead, isOpen, onClose, isDark = true }: 
               isDark={isDark}
               isGenerating={isGeneratingWebsite}
               onGenerate={handleGenerateWebsite}
+              error={websiteError}
+              onErrorDismiss={() => setWebsiteError(null)}
+              progress={websiteProgress}
             />
           )}
 
@@ -280,7 +389,7 @@ function OverviewTab({
   const borderColor = isDark ? 'border-zinc-700' : 'border-zinc-200';
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 space-y-4">
       {/* Status Selector */}
       <div className={`p-4 rounded-xl ${bgSecondary}`}>
         <label className={`text-sm font-medium ${textSecondary} mb-2 block`}>Lead Status</label>
@@ -406,11 +515,19 @@ function WebsiteTab({
   isDark,
   isGenerating,
   onGenerate,
+  error,
+  onErrorDismiss,
+  progress,
 }: {
   lead: Lead;
   isDark: boolean;
   isGenerating: boolean;
   onGenerate: () => void;
+  error: string | null;
+  onErrorDismiss: () => void;
+  progress: {
+    stages: Array<{ id: string; message: string; status: 'pending' | 'active' | 'complete' }>;
+  } | null;
 }) {
   const bgSecondary = isDark ? 'bg-zinc-800' : 'bg-zinc-50';
   const textPrimary = isDark ? 'text-white' : 'text-zinc-900';
@@ -419,7 +536,84 @@ function WebsiteTab({
   const hasPreview = !!lead.previewToken;
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 space-y-4">
+      {/* Error Alert */}
+      {error && (
+        <div className={`p-4 rounded-lg ${isDark ? 'bg-red-900/20 border border-red-800' : 'bg-red-50 border border-red-200'}`}>
+          <div className="flex items-start gap-3">
+            <AlertCircle size={20} className="text-red-500 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <h4 className={`text-sm font-semibold mb-1 ${isDark ? 'text-red-400' : 'text-red-700'}`}>
+                Website Generation Failed
+              </h4>
+              <p className={`text-sm mb-3 ${isDark ? 'text-red-300' : 'text-red-600'}`}>
+                {error}
+              </p>
+
+              {/* Recovery tips based on error type */}
+              {error.includes('timeout') && (
+                <p className={`text-xs mb-3 ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                  💡 Try generating without the URL to skip website analysis
+                </p>
+              )}
+              {error.includes('rate limit') && (
+                <p className={`text-xs mb-3 ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                  💡 The AI service is busy. Wait 1-2 minutes before retrying
+                </p>
+              )}
+              {error.includes('not found') && (
+                <p className={`text-xs mb-3 ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                  💡 Double-check the website URL in the lead details
+                </p>
+              )}
+              {error.includes('SSL') && (
+                <p className={`text-xs mb-3 ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                  💡 This website may have security certificate issues
+                </p>
+              )}
+
+              <button
+                onClick={() => {
+                  onErrorDismiss();
+                  onGenerate();
+                }}
+                className={`px-4 py-2 text-sm font-medium rounded-lg ${isDark ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-red-500 hover:bg-red-600 text-white'}`}
+              >
+                Try Again
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Progress Display */}
+      {progress && (
+        <div className={`p-4 rounded-lg ${isDark ? 'bg-zinc-800 border border-zinc-700' : 'bg-zinc-100 border border-zinc-200'}`}>
+          <div className="space-y-3">
+            {progress.stages.map(stage => (
+              <div key={stage.id} className="flex items-center gap-2">
+                {stage.status === 'complete' && (
+                  <Loader2 size={14} className="text-green-500 flex-shrink-0" />
+                )}
+                {stage.status === 'active' && (
+                  <Loader2 size={14} className="animate-spin text-blue-500 flex-shrink-0" />
+                )}
+                {stage.status === 'pending' && (
+                  <div className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                )}
+                <span className={`text-sm ${
+                  stage.status === 'complete' ? `${isDark ? 'text-zinc-300' : 'text-zinc-600'}` :
+                  stage.status === 'active' ? `${isDark ? 'text-blue-300 font-medium' : 'text-blue-600 font-medium'}` :
+                  `${isDark ? 'text-zinc-500' : 'text-zinc-400'}`
+                }`}>
+                  {stage.message}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Current Website Status */}
       {lead.websiteAnalysis && (
         <WebsiteAnalysisCard analysis={lead.websiteAnalysis} isDark={isDark} showFullDetails />
@@ -475,16 +669,16 @@ function WebsiteTab({
           <button
             onClick={onGenerate}
             disabled={isGenerating}
-            className="w-full flex items-center justify-center gap-2 px-6 py-4 text-base font-semibold bg-blue-500 hover:bg-blue-600 text-white rounded-xl transition-colors disabled:opacity-50"
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold bg-blue-500 hover:bg-blue-600 text-white rounded-xl transition-colors disabled:opacity-50"
           >
             {isGenerating ? (
               <>
-                <Loader2 size={20} className="animate-spin" />
+                <Loader2 size={16} className="animate-spin" />
                 Generating Preview...
               </>
             ) : (
               <>
-                <FileCode size={20} />
+                <FileCode size={16} />
                 Generate Website Preview
               </>
             )}
@@ -526,7 +720,7 @@ function OutreachTab({
   const hasOutreach = lead.outreachGenerated;
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 space-y-4">
       {/* Generate Outreach */}
       <div className={`p-6 rounded-xl ${bgSecondary}`}>
         <div className="flex items-start justify-between mb-4">
@@ -561,16 +755,16 @@ function OutreachTab({
           <button
             onClick={onGenerate}
             disabled={isGenerating}
-            className="w-full flex items-center justify-center gap-2 px-6 py-4 text-base font-semibold bg-blue-500 hover:bg-blue-600 text-white rounded-xl transition-colors disabled:opacity-50"
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold bg-blue-500 hover:bg-blue-600 text-white rounded-xl transition-colors disabled:opacity-50"
           >
             {isGenerating ? (
               <>
-                <Loader2 size={20} className="animate-spin" />
+                <Loader2 size={16} className="animate-spin" />
                 Generating Outreach...
               </>
             ) : (
               <>
-                <MessageSquare size={20} />
+                <MessageSquare size={16} />
                 Generate Outreach Scripts
               </>
             )}
@@ -645,7 +839,7 @@ function ActivityTab({
   const borderColor = isDark ? 'border-zinc-700' : 'border-zinc-200';
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 space-y-4">
       {/* Add Note */}
       <div className={`p-4 rounded-xl ${bgSecondary}`}>
         <h3 className={`text-sm font-medium ${textPrimary} mb-3`}>Add Note</h3>

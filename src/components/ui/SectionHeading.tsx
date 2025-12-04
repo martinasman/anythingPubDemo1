@@ -17,11 +17,11 @@ export default function SectionHeading({
 
   return (
     <div className={`mb-12 ${alignClass} ${className}`}>
-      <h2 className="text-3xl sm:text-4xl font-bold text-zinc-900 dark:text-slate-100 mb-4">
+      <h2 className="text-2xl sm:text-3xl font-bold text-zinc-900 dark:text-slate-100 mb-4">
         {title}
       </h2>
       {subtitle && (
-        <p className="text-lg text-zinc-600 dark:text-slate-400 max-w-2xl mx-auto">
+        <p className="text-base text-zinc-600 dark:text-slate-400 max-w-2xl mx-auto">
           {subtitle}
         </p>
       )}

@@ -1,12 +1,14 @@
 /**
  * Website Preview Page
  *
- * Displays the generated website preview for a lead.
+ * Displays the generated website preview for a lead using iframe isolation.
+ * This prevents the parent app theme from affecting the preview.
  * Previews expire after 30 days.
  */
 
 import { createAdminClient } from '@/utils/supabase/admin';
 import { notFound } from 'next/navigation';
+import PreviewIframeContainer from '@/components/preview/PreviewIframeContainer';
 import type { LeadWebsiteArtifact } from '@/types/database';
 
 interface PreviewPageProps {
@@ -17,19 +19,29 @@ export default async function PreviewPage({ params }: PreviewPageProps) {
   const supabase = createAdminClient();
   const { token } = await params;
 
-  // Fetch the website data
-  const { data: websiteData, error } = await supabase
-    .from('lead_websites')
+  // Scan all lead_website artifacts for the token
+  const { data: artifacts } = await supabase
+    .from('artifacts')
     .select('*')
-    .eq('preview_token', token)
-    .single();
+    .eq('type', 'lead_website');
 
-  if (error || !websiteData) {
+  let websiteData: LeadWebsiteArtifact | null = null;
+  if (artifacts) {
+    for (const artifact of artifacts) {
+      const website = artifact.data.websites?.find((w: any) => w.previewToken === token);
+      if (website) {
+        websiteData = website;
+        break;
+      }
+    }
+  }
+
+  if (!websiteData) {
     notFound();
   }
 
   // Check if expired
-  if (websiteData.expires_at && new Date(websiteData.expires_at) < new Date()) {
+  if (websiteData.expiresAt && new Date(websiteData.expiresAt) < new Date()) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
         <div className="bg-white p-8 rounded-xl shadow-lg max-w-md text-center">
@@ -37,13 +49,13 @@ export default async function PreviewPage({ params }: PreviewPageProps) {
           <p className="text-gray-600 mb-6">
             This website preview has expired. Please contact us to generate a new preview.
           </p>
-          <div className="text-sm text-gray-400">Expired on: {new Date(websiteData.expires_at).toLocaleDateString()}</div>
+          <div className="text-sm text-gray-400">Expired on: {new Date(websiteData.expiresAt).toLocaleDateString()}</div>
         </div>
       </div>
     );
   }
 
-  const websiteArtifact = websiteData.data as LeadWebsiteArtifact;
+  const websiteArtifact = websiteData;
   const indexFile = websiteArtifact.files?.find(
     (f) => f.path === '/index.html' || f.path === 'index.html'
   );
@@ -59,57 +71,50 @@ export default async function PreviewPage({ params }: PreviewPageProps) {
     );
   }
 
-  // Return the HTML content directly
-  // Using dangerouslySetInnerHTML because this is generated website content
-  return (
-    <html>
-      <head>
-        <title>{websiteArtifact.leadName || 'Website Preview'}</title>
-        <meta name="robots" content="noindex, nofollow" />
-      </head>
-      <body>
-        <div dangerouslySetInnerHTML={{ __html: extractBodyContent(indexFile.content) }} />
+  // Construct complete HTML document for iframe
+  const completeHtml = constructCompleteHtml(indexFile.content, websiteArtifact.files);
 
-        {/* Preview Banner */}
-        <div
-          style={{
-            position: 'fixed',
-            bottom: '20px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            backgroundColor: '#1f2937',
-            color: 'white',
-            padding: '12px 24px',
-            borderRadius: '9999px',
-            fontSize: '14px',
-            fontFamily: 'system-ui, sans-serif',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
-            zIndex: 9999,
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-          }}
-        >
-          <span style={{ color: '#10b981' }}>●</span>
-          Preview for {websiteArtifact.leadName}
-          <span style={{ color: '#9ca3af', marginLeft: '8px' }}>
-            Expires: {websiteArtifact.expiresAt ? new Date(websiteArtifact.expiresAt).toLocaleDateString() : 'N/A'}
-          </span>
-        </div>
-      </body>
-    </html>
+  // Return iframe container for style isolation
+  // This prevents the parent app theme (light/dark mode) from affecting the preview
+  return (
+    <PreviewIframeContainer
+      html={completeHtml}
+      leadName={websiteArtifact.leadName}
+      expiresAt={websiteArtifact.expiresAt}
+    />
   );
 }
 
 /**
- * Extract body content from full HTML
+ * Construct complete HTML document with inline CSS and JS
+ * Used for iframe rendering to ensure all assets are self-contained
  */
-function extractBodyContent(html: string): string {
-  // If the HTML has a body tag, extract just the body content
-  const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-  if (bodyMatch) {
-    return bodyMatch[1];
+function constructCompleteHtml(
+  indexHtml: string,
+  files?: Array<{ path: string; content: string; type: string }>
+): string {
+  let html = indexHtml;
+
+  // Inline CSS file if it exists
+  if (files) {
+    const cssFile = files.find(f => f.path === '/styles.css');
+    if (cssFile) {
+      html = html.replace(
+        '</head>',
+        `<style>${cssFile.content}</style></head>`
+      );
+    }
+
+    // Inline JS file if it exists
+    const jsFile = files.find(f => f.path === '/script.js');
+    if (jsFile) {
+      html = html.replace(
+        '</body>',
+        `<script>${jsFile.content}</script></body>`
+      );
+    }
   }
+
   return html;
 }
 
@@ -120,16 +125,24 @@ export async function generateMetadata({ params }: PreviewPageProps) {
   const supabase = createAdminClient();
   const { token } = await params;
 
-  const { data: websiteData } = await supabase
-    .from('lead_websites')
-    .select('data')
-    .eq('preview_token', token)
-    .single();
+  const { data: artifacts } = await supabase
+    .from('artifacts')
+    .select('*')
+    .eq('type', 'lead_website');
 
-  const artifact = websiteData?.data as LeadWebsiteArtifact | undefined;
+  let websiteData: LeadWebsiteArtifact | undefined;
+  if (artifacts) {
+    for (const artifact of artifacts) {
+      const website = artifact.data.websites?.find((w: any) => w.previewToken === token);
+      if (website) {
+        websiteData = website;
+        break;
+      }
+    }
+  }
 
   return {
-    title: artifact?.leadName ? `${artifact.leadName} - Website Preview` : 'Website Preview',
+    title: websiteData?.leadName ? `${websiteData.leadName} - Website Preview` : 'Website Preview',
     robots: 'noindex, nofollow',
   };
 }

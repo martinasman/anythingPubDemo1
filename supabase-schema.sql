@@ -48,11 +48,11 @@ CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
 -- ============================================
 -- ARTIFACTS TABLE
 -- ============================================
--- Stores generated artifacts (research, identity, website code)
+-- Stores generated artifacts (research, identity, website code, business plan, leads, outreach, crm, etc.)
 CREATE TABLE IF NOT EXISTS artifacts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK (type IN ('website_code', 'identity', 'market_research')),
+  type TEXT NOT NULL CHECK (type IN ('website_code', 'identity', 'ads', 'market_research', 'business_plan', 'leads', 'outreach', 'first_week_plan', 'long_term_plan', 'lead_website', 'crm', 'contracts', 'client_work', 'administration')),
   data JSONB NOT NULL,
   version INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -278,24 +278,14 @@ CREATE TRIGGER update_leads_updated_at
   EXECUTE FUNCTION update_updated_at_column();
 
 -- ============================================
--- LEAD WEBSITES TABLE
+-- LEAD WEBSITES - STORED IN ARTIFACTS TABLE
 -- ============================================
--- Stores generated website previews for leads (with 30-day expiration)
-CREATE TABLE IF NOT EXISTS lead_websites (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
-  preview_token TEXT UNIQUE NOT NULL,
-  data JSONB NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  expires_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '30 days')
-);
-
--- Add indexes for faster queries
-CREATE INDEX IF NOT EXISTS idx_lead_websites_token ON lead_websites(preview_token);
-CREATE INDEX IF NOT EXISTS idx_lead_websites_project ON lead_websites(project_id);
-CREATE INDEX IF NOT EXISTS idx_lead_websites_lead ON lead_websites(lead_id);
-CREATE INDEX IF NOT EXISTS idx_lead_websites_expires ON lead_websites(expires_at);
+-- Lead websites are now stored in the artifacts table with type='lead_website'
+-- This follows the existing architecture pattern and eliminates foreign key constraints
+-- GIN index for efficient JSONB queries on preview tokens
+CREATE INDEX IF NOT EXISTS idx_artifacts_lead_websites_jsonb
+ON artifacts USING GIN (data)
+WHERE type = 'lead_website';
 
 -- ============================================
 -- LEAD ACTIVITIES TABLE
@@ -321,7 +311,6 @@ CREATE INDEX IF NOT EXISTS idx_activities_created ON lead_activities(created_at 
 
 -- Enable RLS on new tables
 ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
-ALTER TABLE lead_websites ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lead_activities ENABLE ROW LEVEL SECURITY;
 
 -- Leads policies
@@ -343,27 +332,6 @@ CREATE POLICY "Allow public update access to leads"
 DROP POLICY IF EXISTS "Allow public delete access to leads" ON leads;
 CREATE POLICY "Allow public delete access to leads"
   ON leads FOR DELETE
-  USING (true);
-
--- Lead websites policies
-DROP POLICY IF EXISTS "Allow public read access to lead_websites" ON lead_websites;
-CREATE POLICY "Allow public read access to lead_websites"
-  ON lead_websites FOR SELECT
-  USING (true);
-
-DROP POLICY IF EXISTS "Allow public insert access to lead_websites" ON lead_websites;
-CREATE POLICY "Allow public insert access to lead_websites"
-  ON lead_websites FOR INSERT
-  WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Allow public update access to lead_websites" ON lead_websites;
-CREATE POLICY "Allow public update access to lead_websites"
-  ON lead_websites FOR UPDATE
-  USING (true);
-
-DROP POLICY IF EXISTS "Allow public delete access to lead_websites" ON lead_websites;
-CREATE POLICY "Allow public delete access to lead_websites"
-  ON lead_websites FOR DELETE
   USING (true);
 
 -- Lead activities policies
@@ -395,10 +363,206 @@ ALTER PUBLICATION supabase_realtime ADD TABLE lead_activities;
 -- DELETE FROM lead_websites WHERE expires_at < NOW();
 
 -- ============================================
+-- CLIENTS TABLE (BUSINESS OS - CRM NODE)
+-- ============================================
+-- Stores client relationships converted from leads or added manually
+CREATE TABLE IF NOT EXISTS clients (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+
+  -- Basic Information
+  company_name TEXT NOT NULL,
+  industry TEXT,
+
+  -- Contact Information
+  primary_contact_name TEXT,
+  primary_contact_email TEXT,
+  primary_contact_phone TEXT,
+  primary_contact_title TEXT,
+
+  -- Address
+  billing_address TEXT,
+  shipping_address TEXT,
+
+  -- Business Details
+  website TEXT,
+  tax_id TEXT,
+  payment_terms INTEGER DEFAULT 30,
+  currency TEXT DEFAULT 'USD',
+
+  -- Relationship Status
+  status TEXT DEFAULT 'prospect' CHECK (status IN (
+    'prospect',
+    'active',
+    'onboarding',
+    'paused',
+    'churned',
+    'archived'
+  )),
+
+  -- Financial Metrics (cached for performance)
+  lifetime_value DECIMAL(10,2) DEFAULT 0,
+  total_invoiced DECIMAL(10,2) DEFAULT 0,
+  total_paid DECIMAL(10,2) DEFAULT 0,
+  outstanding_balance DECIMAL(10,2) DEFAULT 0,
+
+  -- Relationship Tracking
+  source TEXT,
+  lead_id UUID REFERENCES leads(id) ON DELETE SET NULL,
+  acquisition_date TIMESTAMPTZ,
+  first_project_date TIMESTAMPTZ,
+  last_invoice_date TIMESTAMPTZ,
+
+  -- Notes & Tags
+  notes TEXT,
+  tags TEXT[],
+
+  -- Metadata
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  created_by TEXT,
+
+  CONSTRAINT unique_client_per_project UNIQUE(project_id, company_name)
+);
+
+-- Performance Indexes
+CREATE INDEX IF NOT EXISTS idx_clients_project ON clients(project_id);
+CREATE INDEX IF NOT EXISTS idx_clients_status ON clients(status);
+CREATE INDEX IF NOT EXISTS idx_clients_lead_id ON clients(lead_id) WHERE lead_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_clients_acquisition_date ON clients(acquisition_date DESC);
+CREATE INDEX IF NOT EXISTS idx_clients_lifetime_value ON clients(lifetime_value DESC);
+
+-- Trigger for clients table
+DROP TRIGGER IF EXISTS update_clients_updated_at ON clients;
+CREATE TRIGGER update_clients_updated_at
+  BEFORE UPDATE ON clients
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================
+-- CLIENT ACTIVITIES TABLE (CRM AUDIT TRAIL)
+-- ============================================
+-- Tracks all activities for clients (notes, status changes, emails, contracts, etc.)
+CREATE TABLE IF NOT EXISTS client_activities (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  client_id UUID NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+
+  -- Activity Details
+  type TEXT NOT NULL CHECK (type IN (
+    'note_added',
+    'status_changed',
+    'email_sent',
+    'call_made',
+    'meeting_held',
+    'contract_signed',
+    'invoice_sent',
+    'payment_received',
+    'project_started',
+    'deliverable_sent',
+    'feedback_received'
+  )),
+  content TEXT,
+
+  -- Metadata
+  metadata JSONB,
+
+  -- Related Entities
+  related_contract_id UUID,
+  related_invoice_id UUID,
+  related_project_id UUID,
+
+  -- User
+  user_name TEXT,
+
+  -- Timestamp
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Performance Indexes
+CREATE INDEX IF NOT EXISTS idx_client_activities_project ON client_activities(project_id);
+CREATE INDEX IF NOT EXISTS idx_client_activities_client ON client_activities(client_id);
+CREATE INDEX IF NOT EXISTS idx_client_activities_type ON client_activities(type);
+CREATE INDEX IF NOT EXISTS idx_client_activities_created ON client_activities(created_at DESC);
+
+-- ============================================
+-- RLS POLICIES FOR CLIENT TABLES
+-- ============================================
+
+-- Enable RLS on client tables
+ALTER TABLE clients ENABLE ROW LEVEL SECURITY;
+ALTER TABLE client_activities ENABLE ROW LEVEL SECURITY;
+
+-- Clients policies
+DROP POLICY IF EXISTS "Allow public read access to clients" ON clients;
+CREATE POLICY "Allow public read access to clients"
+  ON clients FOR SELECT
+  USING (true);
+
+DROP POLICY IF EXISTS "Allow public insert access to clients" ON clients;
+CREATE POLICY "Allow public insert access to clients"
+  ON clients FOR INSERT
+  WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public update access to clients" ON clients;
+CREATE POLICY "Allow public update access to clients"
+  ON clients FOR UPDATE
+  USING (true);
+
+DROP POLICY IF EXISTS "Allow public delete access to clients" ON clients;
+CREATE POLICY "Allow public delete access to clients"
+  ON clients FOR DELETE
+  USING (true);
+
+-- Client activities policies
+DROP POLICY IF EXISTS "Allow public read access to client_activities" ON client_activities;
+CREATE POLICY "Allow public read access to client_activities"
+  ON client_activities FOR SELECT
+  USING (true);
+
+DROP POLICY IF EXISTS "Allow public insert access to client_activities" ON client_activities;
+CREATE POLICY "Allow public insert access to client_activities"
+  ON client_activities FOR INSERT
+  WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public delete access to client_activities" ON client_activities;
+CREATE POLICY "Allow public delete access to client_activities"
+  ON client_activities FOR DELETE
+  USING (true);
+
+-- ============================================
+-- ENABLE REALTIME FOR CLIENT TABLES
+-- ============================================
+ALTER PUBLICATION supabase_realtime ADD TABLE clients;
+ALTER PUBLICATION supabase_realtime ADD TABLE client_activities;
+
+-- ============================================
+-- MODE SELECTION SUPPORT (Added 2024-12-03)
+-- ============================================
+-- Support for guided mode selection (agency, commerce, playground)
+
+-- Add mode column to projects table
+ALTER TABLE projects
+ADD COLUMN IF NOT EXISTS mode TEXT CHECK (mode IN ('agency', 'commerce', 'playground'));
+
+-- Add mode_data column for mode-specific configuration
+ALTER TABLE projects
+ADD COLUMN IF NOT EXISTS mode_data JSONB DEFAULT '{}'::jsonb;
+
+-- Add index for mode queries
+CREATE INDEX IF NOT EXISTS idx_projects_mode ON projects(mode);
+
+-- Comment for documentation
+COMMENT ON COLUMN projects.mode IS 'Business mode: agency, commerce, or playground';
+COMMENT ON COLUMN projects.mode_data IS 'Mode-specific configuration data (agency type, commerce entry point, etc.)';
+
+-- ============================================
 -- CLEANUP (IF NEEDED)
 -- ============================================
 -- Uncomment these ONLY if you want to completely reset the database
 
+-- DROP TABLE IF EXISTS client_activities CASCADE;
+-- DROP TABLE IF EXISTS clients CASCADE;
 -- DROP TABLE IF EXISTS lead_activities CASCADE;
 -- DROP TABLE IF EXISTS lead_websites CASCADE;
 -- DROP TABLE IF EXISTS leads CASCADE;

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useProjectStore } from '@/store/projectStore';
-import { Users, Target, Mail, Phone, Linkedin, GripVertical, ExternalLink, AlertTriangle, Globe, X, MapPin, Building2, Loader2 } from 'lucide-react';
+import { Users, Target, Mail, Phone, Linkedin, GripVertical, ExternalLink, AlertTriangle, Globe, X, MapPin, Building2, Loader2, ArrowRight } from 'lucide-react';
 import type { Lead } from '@/types/database';
 import EmailModal from './EmailModal';
 import CallScriptModal from './CallScriptModal';
@@ -241,6 +241,13 @@ export default function CRMFocusView() {
                         onCall={() => setCallModalLead(lead)}
                         onClick={() => setCanvasState({ type: 'lead-detail', leadId: lead.id })}
                         hasScript={!!getScriptForLead(lead.id)}
+                        onConvertToClient={() => {
+                          window.dispatchEvent(new CustomEvent('autoSubmitPrompt', {
+                            detail: {
+                              prompt: `Convert the lead "${lead.companyName}" to a client using the manage_crm tool. Use the convert_lead action with leadId="${lead.id}".`
+                            }
+                          }));
+                        }}
                       />
                     ))
                   )}
@@ -327,7 +334,7 @@ export default function CRMFocusView() {
             <button
               onClick={handleSubmitLeadGen}
               disabled={!leadGenIndustry || !leadGenLocation}
-              className={`w-full mt-6 py-3 px-4 rounded-xl font-medium transition-colors ${
+              className={`w-full mt-6 py-2 px-3 text-sm rounded-xl font-medium transition-colors ${
                 leadGenIndustry && leadGenLocation
                   ? isDark ? 'bg-white text-zinc-900 hover:bg-zinc-100' : 'bg-zinc-900 text-white hover:bg-zinc-800'
                   : isDark ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
@@ -376,6 +383,7 @@ interface LeadCardProps {
   onCall: () => void;
   onClick: () => void;
   hasScript: boolean;
+  onConvertToClient: () => void;
 }
 
 function LeadCard({
@@ -388,6 +396,7 @@ function LeadCard({
   onCall,
   onClick,
   hasScript,
+  onConvertToClient,
 }: LeadCardProps) {
   // Get website status indicator
   const getWebsiteIndicator = () => {
@@ -475,6 +484,13 @@ function LeadCard({
             <Linkedin size={14} />
           </a>
         )}
+        <button
+          onClick={(e) => { e.stopPropagation(); onConvertToClient(); }}
+          className={`p-1.5 rounded ${isDark ? 'text-green-400 hover:bg-green-900/20 hover:text-green-300' : 'text-green-600 hover:bg-green-50 hover:text-green-700'} transition-colors`}
+          title="Convert to Client"
+        >
+          <ArrowRight size={14} />
+        </button>
         <button
           onClick={(e) => { e.stopPropagation(); onClick(); }}
           className={`ml-auto p-1.5 rounded ${isDark ? 'text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200' : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700'} transition-colors`}

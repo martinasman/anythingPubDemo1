@@ -1,11 +1,11 @@
 'use client';
 
 import { useProjectStore } from '@/store/projectStore';
-import { Sparkles, Target, Palette, Type } from 'lucide-react';
+import { Sparkles, Target, Palette, Type, ArrowLeft, AlertCircle } from 'lucide-react';
 import { useCanvasBackground } from '@/hooks/useCanvasBackground';
 
 export default function BrandView() {
-  const { artifacts, runningTools } = useProjectStore();
+  const { artifacts, runningTools, setCanvasState, toolStatuses, retryGeneration } = useProjectStore();
   const { bgStyle, isDark } = useCanvasBackground();
 
   const isIdentityLoading = runningTools.has('identity');
@@ -13,7 +13,7 @@ export default function BrandView() {
   const businessPlan = artifacts.businessPlan;
 
   // Dynamic styling based on background
-  const cardBg = isDark ? 'bg-zinc-900/80 backdrop-blur-sm' : 'bg-white/90 backdrop-blur-sm';
+  const cardBg = 'backdrop-blur-sm border border-zinc-800/30 dark:border-zinc-200/10';
   const textPrimary = isDark ? 'text-white' : 'text-zinc-900';
   const textSecondary = isDark ? 'text-zinc-400' : 'text-zinc-600';
   const skeletonBg = isDark ? 'bg-zinc-700' : 'bg-zinc-200';
@@ -21,16 +21,16 @@ export default function BrandView() {
   // Loading state
   if (isIdentityLoading && !identity) {
     return (
-      <div className="h-full overflow-auto p-6" style={bgStyle}>
+      <div className="h-full overflow-auto p-4" style={bgStyle}>
         <div className="max-w-4xl mx-auto animate-pulse">
-          <div className="flex items-center gap-6 mb-8">
+          <div className="flex items-center gap-4 mb-8">
             <div className={`w-28 h-28 rounded-2xl ${skeletonBg}`} />
             <div className="flex-1">
               <div className={`w-48 h-8 ${skeletonBg} rounded mb-3`} />
               <div className={`w-64 h-5 ${skeletonBg} rounded`} />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-2 gap-4">
             <div className={`h-40 ${skeletonBg} rounded-xl`} />
             <div className={`h-40 ${skeletonBg} rounded-xl`} />
           </div>
@@ -41,6 +41,34 @@ export default function BrandView() {
 
   // Empty state
   if (!identity) {
+    const brandStatus = toolStatuses.get('generate_brand_identity');
+    const hasError = brandStatus?.status === 'error';
+    const errorMessage = brandStatus?.errorMessage;
+
+    if (hasError) {
+      return (
+        <div className="h-full flex flex-col items-center justify-center p-6" style={bgStyle}>
+          <div className={`w-24 h-24 rounded-2xl border-2 border-dashed border-red-500 flex items-center justify-center mb-4`}>
+            <AlertCircle size={40} className="text-red-500" />
+          </div>
+          <h3 className="text-xl font-semibold text-red-600 mb-2">
+            Generation Failed
+          </h3>
+          {errorMessage && (
+            <p className={`text-sm ${isDark ? 'text-zinc-400' : 'text-zinc-600'} text-center max-w-sm mb-4`}>
+              {errorMessage}
+            </p>
+          )}
+          <button
+            onClick={() => retryGeneration('identity')}
+            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors"
+          >
+            Retry Generation
+          </button>
+        </div>
+      );
+    }
+
     return (
       <div className="h-full flex flex-col items-center justify-center" style={bgStyle}>
         <div className={`w-24 h-24 rounded-2xl border-2 border-dashed ${isDark ? 'border-zinc-600' : 'border-zinc-300'} flex items-center justify-center mb-4`}>
@@ -58,9 +86,22 @@ export default function BrandView() {
 
   return (
     <div className="h-full overflow-auto" style={bgStyle}>
-      <div className="max-w-4xl mx-auto p-6 space-y-6">
+      <div className="max-w-4xl mx-auto p-4 space-y-4">
+        {/* Back Button */}
+        <button
+          onClick={() => setCanvasState({ type: 'overview' })}
+          className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
+            isDark
+              ? 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+              : 'text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100'
+          }`}
+        >
+          <ArrowLeft size={14} />
+          <span>Back to Overview</span>
+        </button>
+
         {/* Header: Logo + Name + Tagline */}
-        <div className={`flex items-center gap-6 p-6 rounded-2xl ${cardBg}`}>
+        <div className={`flex items-center gap-4 p-4 rounded-2xl ${cardBg}`}>
           <div className={`w-28 h-28 rounded-2xl overflow-hidden ${isDark ? 'bg-zinc-900' : 'bg-white'} flex items-center justify-center shadow-lg flex-shrink-0`}>
             <img
               src={identity.logoUrl}
@@ -69,7 +110,7 @@ export default function BrandView() {
             />
           </div>
           <div className="flex-1 min-w-0">
-            <h1 className={`text-3xl font-bold ${textPrimary} mb-2`}>
+            <h1 className={`text-2xl font-bold ${textPrimary} mb-2`}>
               {identity.name}
             </h1>
             <p className={`text-lg ${textSecondary}`}>

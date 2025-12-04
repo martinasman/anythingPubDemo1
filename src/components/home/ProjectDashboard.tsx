@@ -3,10 +3,13 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/utils/supabase/client';
-import type { Project } from '@/types/database';
+import type { Project, WebsiteArtifact } from '@/types/database';
 import ProjectCard from './ProjectCard';
 import Container from '../ui/Container';
 import { FolderOpen, X } from 'lucide-react';
+
+// Extended project type with website data
+export type ProjectWithWebsite = Project & { websiteData?: WebsiteArtifact };
 
 function SkeletonCard() {
   return (
@@ -33,10 +36,10 @@ function SkeletonCard() {
 
 export default function ProjectDashboard() {
   const { user, isLoading: authLoading } = useAuth();
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<ProjectWithWebsite[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-  const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
+  const [projectToDelete, setProjectToDelete] = useState<ProjectWithWebsite | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
@@ -48,7 +51,9 @@ export default function ProjectDashboard() {
 
       try {
         const supabase = createClient();
-        const { data, error } = await (supabase
+
+        // Fetch projects
+        const { data: projectsData, error } = await (supabase
           .from('projects') as any)
           .select('*')
           .eq('user_id', user.id)
@@ -56,7 +61,26 @@ export default function ProjectDashboard() {
           .limit(9);
 
         if (error) throw error;
-        setProjects(data || []);
+
+        // Fetch website artifacts for these projects
+        const projectIds = projectsData?.map((p: Project) => p.id) || [];
+        let projectsWithWebsites: ProjectWithWebsite[] = projectsData || [];
+
+        if (projectIds.length > 0) {
+          const { data: artifactsData } = await (supabase
+            .from('artifacts') as any)
+            .select('project_id, data')
+            .in('project_id', projectIds)
+            .eq('type', 'website_code');
+
+          // Merge website data into projects
+          projectsWithWebsites = (projectsData || []).map((project: Project) => ({
+            ...project,
+            websiteData: artifactsData?.find((a: { project_id: string; data: WebsiteArtifact }) => a.project_id === project.id)?.data,
+          }));
+        }
+
+        setProjects(projectsWithWebsites);
       } catch (error) {
         console.error('Failed to fetch projects:', error);
       } finally {

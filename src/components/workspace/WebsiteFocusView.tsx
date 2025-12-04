@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useProjectStore } from '@/store/projectStore';
-import { Globe, Monitor, Smartphone, Tablet, ExternalLink, ArrowLeft, Code } from 'lucide-react';
+import { Globe, Monitor, Smartphone, Tablet, ExternalLink, ArrowLeft, Code, AlertCircle } from 'lucide-react';
 import { useCanvasBackground } from '@/hooks/useCanvasBackground';
 import WebsiteCodeModal from './WebsiteCodeModal';
 
@@ -15,7 +15,7 @@ const VIEWPORT_WIDTHS: Record<Viewport, string> = {
 };
 
 export default function WebsiteFocusView() {
-  const { artifacts, runningTools, setCanvasState } = useProjectStore();
+  const { artifacts, runningTools, setCanvasState, toolStatuses, retryGeneration } = useProjectStore();
   const { bgStyle, isDark } = useCanvasBackground();
   const [viewport, setViewport] = useState<Viewport>('desktop');
   const [websitePreviewUrl, setWebsitePreviewUrl] = useState<string | null>(null);
@@ -29,35 +29,43 @@ export default function WebsiteFocusView() {
   const textPrimary = isDark ? 'text-white' : 'text-zinc-900';
   const textSecondary = isDark ? 'text-zinc-400' : 'text-zinc-600';
 
-  // Create iframe content from website HTML with proper cleanup
-  useEffect(() => {
+  // Memoize file contents to prevent unnecessary recalculations
+  const fileContents = useMemo(() => {
     if (!artifacts.website?.files) {
-      setWebsitePreviewUrl(null);
-      return;
+      return { htmlContent: null, cssContent: null, jsContent: null };
     }
 
     const htmlFile = artifacts.website.files.find(f => f.path === '/index.html');
-    if (!htmlFile) {
+    const cssFile = artifacts.website.files.find(f => f.path === '/styles.css');
+    const jsFile = artifacts.website.files.find(f => f.path === '/script.js');
+
+    return {
+      htmlContent: htmlFile?.content || null,
+      cssContent: cssFile?.content || null,
+      jsContent: jsFile?.content || null,
+    };
+  }, [artifacts.website?.files]);
+
+  // Create iframe content from website HTML with proper cleanup
+  useEffect(() => {
+    if (!fileContents.htmlContent) {
       setWebsitePreviewUrl(null);
       return;
     }
 
-    const cssFile = artifacts.website.files.find(f => f.path === '/styles.css');
-    const jsFile = artifacts.website.files.find(f => f.path === '/script.js');
+    let modifiedHtml = fileContents.htmlContent;
 
-    let modifiedHtml = htmlFile.content;
-
-    if (cssFile) {
+    if (fileContents.cssContent) {
       modifiedHtml = modifiedHtml.replace(
         '</head>',
-        `<style>${cssFile.content}</style></head>`
+        `<style>${fileContents.cssContent}</style></head>`
       );
     }
 
-    if (jsFile) {
+    if (fileContents.jsContent) {
       modifiedHtml = modifiedHtml.replace(
         '</body>',
-        `<script>${jsFile.content}</script></body>`
+        `<script>${fileContents.jsContent}</script></body>`
       );
     }
 
@@ -65,14 +73,40 @@ export default function WebsiteFocusView() {
     const url = URL.createObjectURL(blob);
     setWebsitePreviewUrl(url);
 
-    // CLEANUP: Revoke blob URL when artifact changes or component unmounts
+    // CLEANUP: Revoke blob URL when file content changes or component unmounts
     return () => {
       URL.revokeObjectURL(url);
     };
-  }, [artifacts.website]);
+  }, [fileContents.htmlContent, fileContents.cssContent, fileContents.jsContent]);
 
   // Empty/Loading state
   if (!websitePreviewUrl) {
+    const websiteStatus = toolStatuses.get('generate_website_files');
+    const hasError = websiteStatus?.status === 'error';
+    const errorMessage = websiteStatus?.errorMessage;
+
+    if (hasError) {
+      return (
+        <div className="h-full flex flex-col items-center justify-center p-6" style={bgStyle}>
+          <AlertCircle size={48} className="text-red-500 mb-2" />
+          <h3 className="text-lg font-semibold text-red-600 mb-2">
+            Generation Failed
+          </h3>
+          {errorMessage && (
+            <p className={`text-sm ${isDark ? 'text-zinc-400' : 'text-zinc-600'} text-center max-w-sm mb-4`}>
+              {errorMessage}
+            </p>
+          )}
+          <button
+            onClick={() => retryGeneration('website')}
+            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors"
+          >
+            Retry Generation
+          </button>
+        </div>
+      );
+    }
+
     return (
       <div className={`h-full flex flex-col items-center justify-center ${isWebsiteLoading ? 'animate-pulse' : ''}`} style={bgStyle}>
         <Globe size={48} className={isDark ? 'text-zinc-600' : 'text-zinc-300'} />

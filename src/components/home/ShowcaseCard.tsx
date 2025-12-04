@@ -46,7 +46,7 @@ export default function ShowcaseCard({ example, onClick }: ShowcaseCardProps) {
 
       {/* Content */}
       <div className="p-6 bg-gradient-to-t from-black/40 to-transparent">
-        <h3 className="text-2xl font-bold text-white mb-1">
+        <h3 className="text-xl font-bold text-white mb-1">
           {identity.name}
         </h3>
         <p className="text-white/90 text-sm mb-3">

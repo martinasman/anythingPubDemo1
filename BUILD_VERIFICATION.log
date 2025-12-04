@@ -1,0 +1,59 @@
+================================================================================
+BUILD VERIFICATION LOG
+================================================================================
+Date: December 2025
+Status: ✅ SUCCESSFUL
+
+================================================================================
+BUILD OUTPUT
+================================================================================
+ ✓ Compiled successfully in 6.2s
+   Running TypeScript ...
+   Collecting page data using 11 workers ...
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+   Generating static pages using 11 workers (0/16) ...
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+   Generating static pages using 11 workers (4/16) 
+   Generating static pages using 11 workers (8/16) 
+   Generating static pages using 11 workers (12/16) 
+ ✓ Generating static pages using 11 workers (16/16) in 890.2ms
+   Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/artifacts/get
+├ ƒ /api/artifacts/update
+├ ƒ /api/artifacts/update-task-completion
+├ ƒ /api/chat
+├ ƒ /api/clients
+├ ƒ /api/clients/[id]
+├ ƒ /api/clients/[id]/activities
+├ ƒ /api/leads/[id]/generate-outreach
+├ ƒ /api/leads/[id]/generate-website
+├ ƒ /api/leads/activity
+├ ƒ /api/leads/status
+├ ƒ /api/leads/submit
+├ ƒ /api/models
+├ ƒ /auth/callback
+├ ƒ /p/[id]
+├ ○ /p/new
+├ ƒ /preview/[token]
+└ ○ /signin
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

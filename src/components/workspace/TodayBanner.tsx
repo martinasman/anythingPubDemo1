@@ -23,6 +23,10 @@ const BANNER_CONTENT: Record<WorkspaceView, { title: string; subtitle: string }>
     title: 'TODAY',
     subtitle: 'Customer relationship management',
   },
+  ADS: {
+    title: 'TODAY',
+    subtitle: 'Ads and marketing content',
+  },
 };
 
 export default function TodayBanner() {

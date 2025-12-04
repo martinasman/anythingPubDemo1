@@ -1,12 +1,12 @@
 'use client';
 
 import { useProjectStore } from '@/store/projectStore';
-import { DollarSign, Check, Calendar } from 'lucide-react';
+import { DollarSign, Check, Calendar, ArrowLeft, AlertCircle } from 'lucide-react';
 import FirstWeekPlanCard from './FirstWeekPlanCard';
 import { useCanvasBackground } from '@/hooks/useCanvasBackground';
 
 export default function BusinessPlanView() {
-  const { artifacts, runningTools, updateTaskCompletion } = useProjectStore();
+  const { artifacts, runningTools, updateTaskCompletion, setCanvasState, toolStatuses, retryGeneration } = useProjectStore();
   const { bgStyle, isDark } = useCanvasBackground();
 
   const isBusinessPlanLoading = runningTools.has('businessplan');
@@ -16,7 +16,7 @@ export default function BusinessPlanView() {
   const firstWeekPlan = artifacts.firstWeekPlan;
 
   // Dynamic styling based on background
-  const cardBg = isDark ? 'bg-zinc-900/80 backdrop-blur-sm' : 'bg-white/90 backdrop-blur-sm';
+  const cardBg = 'backdrop-blur-sm border border-zinc-800/30 dark:border-zinc-200/10';
   const textPrimary = isDark ? 'text-white' : 'text-zinc-900';
   const textSecondary = isDark ? 'text-zinc-400' : 'text-zinc-600';
   const skeletonBg = isDark ? 'bg-zinc-700' : 'bg-zinc-200';
@@ -46,6 +46,34 @@ export default function BusinessPlanView() {
 
   // Empty state
   if (!businessPlan) {
+    const planStatus = toolStatuses.get('generate_business_plan');
+    const hasError = planStatus?.status === 'error';
+    const errorMessage = planStatus?.errorMessage;
+
+    if (hasError) {
+      return (
+        <div className="h-full flex flex-col items-center justify-center p-6" style={bgStyle}>
+          <div className={`w-24 h-24 rounded-2xl border-2 border-dashed border-red-500 flex items-center justify-center mb-4`}>
+            <AlertCircle size={40} className="text-red-500" />
+          </div>
+          <h3 className="text-xl font-semibold text-red-600 mb-2">
+            Generation Failed
+          </h3>
+          {errorMessage && (
+            <p className={`text-sm ${isDark ? 'text-zinc-400' : 'text-zinc-600'} text-center max-w-sm mb-4`}>
+              {errorMessage}
+            </p>
+          )}
+          <button
+            onClick={() => retryGeneration('businessPlan')}
+            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors"
+          >
+            Retry Generation
+          </button>
+        </div>
+      );
+    }
+
     return (
       <div className="h-full flex flex-col items-center justify-center" style={bgStyle}>
         <div className={`w-24 h-24 rounded-2xl border-2 border-dashed ${isDark ? 'border-zinc-600' : 'border-zinc-300'} flex items-center justify-center mb-4`}>
@@ -62,6 +90,19 @@ export default function BusinessPlanView() {
   return (
     <div className="h-full overflow-auto" style={bgStyle}>
       <div className="max-w-5xl mx-auto p-6 space-y-6">
+        {/* Back Button */}
+        <button
+          onClick={() => setCanvasState({ type: 'overview' })}
+          className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
+            isDark
+              ? 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+              : 'text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100'
+          }`}
+        >
+          <ArrowLeft size={14} />
+          <span>Back to Overview</span>
+        </button>
+
         {/* Header */}
         <div>
           <h1 className={`text-2xl font-semibold ${textPrimary}`}>Business Plan & Action Plan</h1>
@@ -91,7 +132,7 @@ export default function BusinessPlanView() {
                   className={`p-5 rounded-xl ${cardBg}`}
                 >
                   <h3 className={`text-lg font-semibold ${textPrimary}`}>{tier.name}</h3>
-                  <div className={`text-3xl font-bold ${isDark ? 'text-zinc-300' : 'text-zinc-700'} my-3`}>{tier.price}</div>
+                  <div className={`text-2xl font-bold ${isDark ? 'text-zinc-300' : 'text-zinc-700'} my-3`}>{tier.price}</div>
                   <ul className="space-y-2">
                     {tier.features.map((feature, fIndex) => (
                       <li key={fIndex} className="flex items-start gap-2 text-sm">

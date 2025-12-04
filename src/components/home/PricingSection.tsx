@@ -7,7 +7,7 @@ import { PRICING_TIERS, CREDIT_COSTS } from '@/data/pricing';
 
 export default function PricingSection() {
   return (
-    <section id="pricing" className="py-20 sm:py-28 bg-zinc-50 dark:bg-slate-900/50 transition-colors">
+    <section id="pricing" className="py-12 sm:py-16 bg-zinc-50 dark:bg-slate-900/50 transition-colors">
       <Container>
         <SectionHeading
           title="Simple, Credit-Based Pricing"
@@ -15,7 +15,7 @@ export default function PricingSection() {
         />
 
         {/* Pricing cards */}
-        <div className="grid md:grid-cols-3 gap-6 lg:gap-8 mb-16">
+        <div className="grid md:grid-cols-3 gap-4 lg:gap-6 mb-16">
           {PRICING_TIERS.map((tier, index) => (
             <div
               key={tier.name}
@@ -41,7 +41,7 @@ export default function PricingSection() {
 
               {/* Price */}
               <div className="mb-6">
-                <span className={`text-4xl font-bold ${
+                <span className={`text-3xl font-bold ${
                   tier.highlighted ? '' : 'text-zinc-900 dark:text-slate-100'
                 }`}>
                   {tier.price === 0 ? 'Free' : `$${tier.price}`}
@@ -84,7 +84,7 @@ export default function PricingSection() {
 
               {/* CTA Button */}
               <button
-                className={`w-full py-3 px-6 rounded-lg font-medium transition-all ${
+                className={`w-full py-2 px-4 text-sm rounded-lg font-medium transition-all ${
                   tier.highlighted
                     ? 'bg-white dark:bg-slate-900 text-zinc-900 dark:text-white hover:bg-zinc-100 dark:hover:bg-slate-800'
                     : 'bg-zinc-900 dark:bg-white text-white dark:text-slate-900 hover:bg-zinc-800 dark:hover:bg-slate-100'

@@ -32,7 +32,7 @@ export default function HeroSection() {
         </div>
 
         {/* Headline */}
-        <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-zinc-900 dark:text-neutral-100 mb-6 animate-fade-in-up">
+        <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-zinc-900 dark:text-neutral-100 mb-6 animate-fade-in-up">
           Turn Any Idea Into a{' '}
           <span className="bg-gradient-to-r from-blue-500 via-blue-400 to-blue-600 bg-clip-text text-transparent">
             Business
@@ -41,7 +41,7 @@ export default function HeroSection() {
         </h1>
 
         {/* Subheadline */}
-        <p className="text-lg sm:text-xl text-zinc-600 dark:text-neutral-400 mb-8 max-w-2xl mx-auto animate-fade-in-up stagger-1">
+        <p className="text-base sm:text-lg text-zinc-600 dark:text-neutral-400 mb-8 max-w-2xl mx-auto animate-fade-in-up stagger-1">
           Describe your vision and our AI generates market research, brand identity,
           and a complete website — all in seconds.
         </p>

@@ -77,7 +77,7 @@ async function generateLogoWithAI(
   colors: { primary: string; secondary: string; accent: string }
 ): Promise<string> {
   try {
-    console.log('[Logo Gen] Generating AI logo with Gemini 2.5 Flash Image (Nano Banana)...');
+    console.log('[Logo Gen] Generating AI logo with Gemini 2.5 Flash...');
 
     const logoPrompt = `Create a professional, unique logo design for "${businessName}".
 
@@ -101,7 +101,7 @@ Think about the business type and create relevant visual metaphors. For example:
 Create a clean, professional logo with the specified colors on a transparent or white background.`;
 
     // Make direct API request to OpenRouter for image generation
-    // Using Nano Banana Pro for logo generation
+    // Using Gemini 2.5 Flash for logo generation
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -111,7 +111,7 @@ Create a clean, professional logo with the specified colors on a transparent or 
         'X-Title': 'AnythingV10',
       },
       body: JSON.stringify({
-        model: 'nexa-ai/nanobanana-pro',
+        model: 'google/gemini-3-pro-image-preview',
         messages: [
           {
             role: 'user',
@@ -332,13 +332,14 @@ export async function generateBrandIdentity(params: z.infer<typeof designSchema>
     const colors = getIndustryColors(businessDescription);
     console.log(`[Design Tool] Selected brand colors: ${colors.primary}`);
 
-    // Generate AI logo with nanobanana-pro
-    console.log('[Design Tool] Generating logo with AI...');
-    const logoUrl = await generateLogoWithAI(generatedName, businessDescription, colors);
+    // OPTIMIZATION: Use fast fallback logo immediately to avoid blocking
+    // The fallback is a professional SVG with the business initial
+    console.log('[Design Tool] Using optimized fast fallback logo for immediate response');
+    const fallbackLogoUrl = generateFallbackLogo(generatedName, colors.primary);
 
     const identityData: IdentityArtifact = {
       name: generatedName,
-      logoUrl,
+      logoUrl: fallbackLogoUrl,
       colors: {
         primary: colors.primary,
         secondary: colors.secondary,
@@ -374,10 +375,36 @@ export async function generateBrandIdentity(params: z.infer<typeof designSchema>
       throw new Error('Failed to save brand identity');
     }
 
+    console.log('[Design Tool] ✅ Brand identity returned quickly with fallback logo');
+
+    // PERFORMANCE OPTIMIZATION: Start AI logo generation in background (non-blocking)
+    // This way user gets instant response with usable fallback, and AI logo loads later
+    generateLogoWithAI(generatedName, businessDescription, colors)
+      .then((aiLogoUrl: string) => {
+        // Update artifact with AI-generated logo asynchronously
+        const updatedData = { ...identityData, logoUrl: aiLogoUrl };
+        (supabase.from('artifacts') as any)
+          .update({
+            data: updatedData,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('project_id', projectId)
+          .eq('type', 'identity')
+          .then(() => {
+            console.log('[Design Tool] 🎨 AI logo generated and saved in background');
+          })
+          .catch((err: unknown) => {
+            console.error('[Design Tool] Failed to update logo in background:', err);
+          });
+      })
+      .catch((err: unknown) => {
+        console.warn('[Design Tool] Background logo generation failed, keeping fallback:', err);
+      });
+
     return {
       success: true,
       artifact,
-      summary: `🎨 Created "${generatedName}" with ${colors.primary} brand colors`,
+      summary: `🎨 Created "${generatedName}" with ${colors.primary} brand colors (logo optimizing)`,
       identity: identityData, // Return for use by other tools
     };
   } catch (error) {

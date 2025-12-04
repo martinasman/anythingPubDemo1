@@ -21,6 +21,7 @@ const PLACEHOLDER_BY_VIEW: Record<WorkspaceView, string> = {
   BRAND: 'Refine your brand identity...',
   FINANCE: 'Update your pricing and offer...',
   CRM: 'Manage your leads and outreach...',
+  ADS: 'Create ads and marketing content...',
 };
 
 // Get placeholder based on context (lead-aware)
@@ -43,6 +44,7 @@ const TOOL_EMOJIS: Record<string, string> = {
   'edit_website': '🌐',
   'edit_identity': '✨',
   'edit_pricing': '💰',
+  'remix_website': '🔄',
 };
 
 export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProps) {
@@ -227,6 +229,8 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
         'edit_website': 'website',
         'edit_identity': 'identity',
         'edit_pricing': 'businessplan',
+        // Remix tool generates website
+        'remix_website': 'website',
       };
 
       // Tool name to workspace view mapping for AI auto-switch
@@ -239,6 +243,7 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
         'edit_pricing': 'FINANCE',
         'generate_leads': 'CRM',
         'generate_outreach_scripts': 'CRM',
+        'remix_website': 'SITE',
       };
 
       // Reset work items and code changes tracking
@@ -302,7 +307,7 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
             // Only show loading canvas for generation tools, NOT edit tools
             // Edit tools should update in place without the full loading screen
             // generate_leads should NOT show loading canvas - it's a conversational flow
-            const isGenerationTool = toolName.startsWith('generate_') || toolName === 'perform_market_research';
+            const isGenerationTool = toolName.startsWith('generate_') || toolName === 'perform_market_research' || toolName === 'remix_website';
             const skipLoadingCanvas = toolName === 'generate_leads';
             if (!hasStartedAnyTool && isGenerationTool && !skipLoadingCanvas) {
               hasStartedAnyTool = true;
@@ -331,7 +336,7 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
           }
 
           // Tool name to artifact type for refresh
-          const toolNameToArtifactType: Record<string, 'website_code' | 'identity' | 'market_research' | 'business_plan' | 'leads' | 'outreach'> = {
+          const toolNameToArtifactType: Record<string, 'website_code' | 'identity' | 'market_research' | 'business_plan' | 'leads' | 'outreach' | 'crawled_site'> = {
             'generate_website_files': 'website_code',
             'edit_website': 'website_code',
             'generate_brand_identity': 'identity',
@@ -341,7 +346,31 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
             'edit_pricing': 'business_plan',
             'generate_leads': 'leads',
             'generate_outreach_scripts': 'outreach',
+            'remix_website': 'website_code',
           };
+
+          // Parse [REMIX_CRAWL:url:message] markers for remix crawl progress
+          const remixCrawlMatches = chunk.matchAll(/\[REMIX_CRAWL:([^:]+):([^\]]+)\]/g);
+          for (const match of remixCrawlMatches) {
+            const [, url, message] = match;
+            // Update tool stage with crawl progress
+            updateToolStage('remix_website', `Crawling: ${message}`);
+          }
+
+          // Parse [REMIX_GENERATE:page:message] markers for remix generation progress
+          const remixGenMatches = chunk.matchAll(/\[REMIX_GENERATE:([^:]+):([^\]]+)\]/g);
+          for (const match of remixGenMatches) {
+            const [, page, message] = match;
+            // Update tool stage with generation progress
+            updateToolStage('remix_website', `Generating: ${message}`);
+          }
+
+          // Parse [REMIX_COMPLETE:summary] markers for remix completion
+          const remixCompleteMatches = chunk.matchAll(/\[REMIX_COMPLETE:([^\]]+)\]/g);
+          for (const match of remixCompleteMatches) {
+            const [, summary] = match;
+            // Tool completion is handled by WORK_DONE marker
+          }
 
           // Parse [WORK_DONE:tool:duration] markers (tool completed)
           const doneMatches = chunk.matchAll(/\[WORK_DONE:(\w+):([^\]]+)\]/g);
@@ -483,6 +512,10 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
             .replace(/\[WORK_DONE:\w+:[^\]]+\]\n?/g, '')
             .replace(/\[WORK_ERROR:\w+:[^\]]+\]\n?/g, '')
             .replace(/\[CODE_CHANGE:[^\]]+\]\n?/g, '')
+            // Remix progress markers
+            .replace(/\[REMIX_CRAWL:[^\]]+\]\n?/g, '')
+            .replace(/\[REMIX_GENERATE:[^\]]+\]\n?/g, '')
+            .replace(/\[REMIX_COMPLETE:[^\]]+\]\n?/g, '')
             // Legacy marker cleanup (backwards compatibility during transition)
             .replace(/\[THINKING\][^\n]*\n?/g, '')
             .replace(/\[PROGRESS:[^\]]+\]\n?/g, '')
@@ -550,7 +583,7 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
   return (
     <div className="h-full flex flex-col" style={{ background: 'var(--surface-1)' }}>
       {/* Chat Stream */}
-      <div ref={chatContainerRef} className="flex-1 overflow-y-auto px-6 py-8 space-y-6 scrollbar-hide">
+      <div ref={chatContainerRef} className="flex-1 overflow-y-auto px-4 py-6 space-y-4 scrollbar-hide">
         {storeMessages.length === 0 ? (
           /* Empty State */
           <div className="flex items-center justify-center h-full" />

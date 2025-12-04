@@ -56,7 +56,7 @@ export default function FinanceView() {
       <div className="max-w-5xl mx-auto p-6 space-y-6">
         {/* Header */}
         <div>
-          <h1 className="text-2xl font-semibold text-zinc-900 dark:text-white">
+          <h1 className="text-xl font-semibold text-zinc-900 dark:text-white">
             Offer & Pricing
           </h1>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
@@ -71,7 +71,7 @@ export default function FinanceView() {
               <TrendingUp size={16} className="text-emerald-500" />
               <span className="text-xs text-zinc-500 dark:text-zinc-400">Revenue Goal</span>
             </div>
-            <div className="text-2xl font-semibold text-zinc-900 dark:text-white">
+            <div className="text-xl font-semibold text-zinc-900 dark:text-white">
               $10,000
             </div>
             <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">per month</p>
@@ -81,7 +81,7 @@ export default function FinanceView() {
               <DollarSign size={16} className="text-blue-500" />
               <span className="text-xs text-zinc-500 dark:text-zinc-400">Avg. Deal Size</span>
             </div>
-            <div className="text-2xl font-semibold text-zinc-900 dark:text-white">
+            <div className="text-xl font-semibold text-zinc-900 dark:text-white">
               {pricingTiers[1]?.price || pricingTiers[0]?.price || '--'}
             </div>
             <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">mid-tier package</p>
@@ -91,7 +91,7 @@ export default function FinanceView() {
               <Receipt size={16} className="text-amber-500" />
               <span className="text-xs text-zinc-500 dark:text-zinc-400">Pricing Tiers</span>
             </div>
-            <div className="text-2xl font-semibold text-zinc-900 dark:text-white">
+            <div className="text-xl font-semibold text-zinc-900 dark:text-white">
               {pricingTiers.length}
             </div>
             <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">available packages</p>
@@ -101,7 +101,7 @@ export default function FinanceView() {
               <Target size={16} className="text-violet-500" />
               <span className="text-xs text-zinc-500 dark:text-zinc-400">Target Market</span>
             </div>
-            <div className="text-2xl font-semibold text-zinc-900 dark:text-white">
+            <div className="text-xl font-semibold text-zinc-900 dark:text-white">
               SMB
             </div>
             <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">small business</p>

@@ -59,7 +59,7 @@ export default function BrandFocusView() {
             />
           </div>
           <div className="flex-1 min-w-0">
-            <h1 className="text-2xl font-bold text-zinc-900 dark:text-white mb-1">
+            <h1 className="text-xl font-bold text-zinc-900 dark:text-white mb-1">
               {identity.name}
             </h1>
             <p className="text-base text-zinc-500 dark:text-slate-400">
@@ -121,7 +121,7 @@ export default function BrandFocusView() {
                   {identity.font}
                 </p>
               </div>
-              <div className="text-2xl font-bold text-zinc-900 dark:text-white" style={{ fontFamily: identity.font }}>
+              <div className="text-xl font-bold text-zinc-900 dark:text-white" style={{ fontFamily: identity.font }}>
                 The quick brown fox jumps over the lazy dog
               </div>
             </div>

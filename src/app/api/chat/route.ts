@@ -9,10 +9,15 @@ import { generateBusinessPlan, businessPlanSchema } from '../tools/tool-business
 import { generateLeads, leadsSchema } from '../tools/tool-leads';
 import { generateOutreachScripts, outreachSchema } from '../tools/tool-outreach';
 import { generateFirstWeekPlan, firstWeekPlanSchema } from '../tools/tool-first-week-plan';
+import { generateAds, adsSchema } from '../tools/tool-ads';
 // Edit tools for modifying existing artifacts
 import { editWebsiteFiles, editWebsiteSchema } from '../tools/tool-edit-website';
 import { editBrandIdentity, editIdentitySchema } from '../tools/tool-edit-identity';
 import { editPricing, editPricingSchema } from '../tools/tool-edit-pricing';
+// CRM tool
+import { manageCRM, crmSchema } from '../tools/tool-crm';
+// Remix tool for website modernization
+import { remixWebsite, remixSchema } from '../tools/tool-remix';
 // AI system prompt
 import { ORCHESTRATOR_SYSTEM_PROMPT } from '@/config/agentPrompts';
 
@@ -28,9 +33,12 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   generate_first_week_plan: 'Planning your first week',
   generate_leads: 'Finding prospects',
   generate_outreach_scripts: 'Writing outreach scripts',
+  generate_ads: 'Creating ad campaigns',
   edit_website: 'Updating website',
   edit_identity: 'Updating brand',
   edit_pricing: 'Updating pricing',
+  manage_crm: 'Managing clients',
+  remix_website: 'Remixing website',
 };
 
 // ============================================
@@ -81,6 +89,53 @@ export async function POST(req: Request) {
 
     console.log('[Chat API] System prompt loaded');
 
+    // ============================================
+    // APP MODE DETECTION (HTML vs Full-Stack)
+    // ============================================
+
+    function detectAppMode(messageContent: string): 'html' | 'nextjs' {
+      const text = messageContent.toLowerCase();
+
+      const fullStackSignals = [
+        'saas',
+        'app',
+        'dashboard',
+        'login',
+        'signup',
+        'database',
+        'user accounts',
+        'manage',
+        'admin panel',
+        'crud',
+        'authentication',
+        'users can',
+        'profiles',
+        'settings page',
+      ];
+
+      const htmlSignals = [
+        'landing page',
+        'marketing site',
+        'portfolio',
+        'website',
+        'coming soon',
+        'static site',
+        'one page',
+        'simple site',
+      ];
+
+      const fullStackScore = fullStackSignals.filter((signal) => text.includes(signal)).length;
+      const htmlScore = htmlSignals.filter((signal) => text.includes(signal)).length;
+
+      // Default to HTML for ambiguous cases (safer/faster)
+      const mode = fullStackScore > htmlScore ? 'nextjs' : 'html';
+      console.log('[Mode Detection] Score: nextjs=' + fullStackScore + ', html=' + htmlScore + ', selected=' + mode);
+      return mode;
+    }
+
+    // Detect mode from user message
+    const appMode = detectAppMode(userMessage?.content || '');
+    console.log('[Chat API] App mode detected:', appMode);
 
     // Tool definitions
     const tools = {
@@ -113,7 +168,31 @@ export async function POST(req: Request) {
           'Generate a complete, responsive website with HTML, CSS, and JavaScript files based on the business description and brand identity',
         inputSchema: codeGenSchema,
         execute: async (params) => {
-          return await generateWebsiteFiles({ ...params, projectId, modelId: selectedModel });
+          // Fetch market research if available to inform website generation
+          let marketResearch: any = null;
+          try {
+            const { data: researchArtifact } = await supabase
+              .from('artifacts')
+              .select('data')
+              .eq('project_id', projectId)
+              .eq('type', 'research')
+              .single();
+
+            if (researchArtifact && typeof researchArtifact === 'object' && 'data' in researchArtifact) {
+              const artifact = researchArtifact as { data?: { marketIntelligence?: any } };
+              marketResearch = artifact.data?.marketIntelligence;
+            }
+          } catch {
+            // Market research not available, continue without it
+          }
+
+          return await generateWebsiteFiles({
+            ...params,
+            projectId,
+            modelId: selectedModel,
+            marketResearch,
+            mode: appMode,
+          });
         },
       }),
       generate_leads: tool({
@@ -144,6 +223,14 @@ export async function POST(req: Request) {
         inputSchema: firstWeekPlanSchema,
         execute: async (params) => {
           return await generateFirstWeekPlan({ ...params, projectId });
+        },
+      }),
+      generate_ads: tool({
+        description:
+          'Generate ad creatives and copy for multiple platforms (Facebook, Instagram, Google, LinkedIn). Creates eye-catching images and persuasive copy optimized for each platform.',
+        inputSchema: adsSchema,
+        execute: async (params) => {
+          return await generateAds({ ...params, projectId });
         },
       }),
       // Edit tools for modifying existing artifacts
@@ -200,6 +287,36 @@ export async function POST(req: Request) {
                 await writeProgress(marker);
               }
             }
+          });
+        },
+      }),
+      manage_crm: tool({
+        description:
+          'Manage client relationships: convert leads to clients, add new clients, update client information, add notes and activities, and track client status changes',
+        inputSchema: crmSchema,
+        execute: async (params) => {
+          return await manageCRM({ ...params, projectId });
+        },
+      }),
+      // Website remix tool - crawls and modernizes existing websites
+      remix_website: tool({
+        description:
+          'Remix/modernize an existing website. Crawls all pages, extracts content/brand/forms, and generates a modern 2025 version. Use when user provides a URL and asks to remake, redesign, or modernize a site.',
+        inputSchema: remixSchema,
+        execute: async (params) => {
+          return await remixWebsite({
+            ...params,
+            projectId,
+            onProgress: async (update) => {
+              // Emit progress markers for the UI
+              if (update.phase === 'crawling' && update.step === 'page') {
+                await writeProgress(`[REMIX_CRAWL:${update.detail}:${update.message}]\n`);
+              } else if (update.phase === 'generating' && update.step === 'page') {
+                await writeProgress(`[REMIX_GENERATE:${update.detail}:${update.message}]\n`);
+              } else if (update.phase === 'complete') {
+                await writeProgress(`[REMIX_COMPLETE:${update.detail}]\n`);
+              }
+            },
           });
         },
       }),
