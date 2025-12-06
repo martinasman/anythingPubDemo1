@@ -7,7 +7,7 @@
 
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/utils/supabase/admin';
-import { getIndustryWebsiteStyle, ARCHITECT_SYSTEM_PROMPT } from '@/config/agentPrompts';
+import { getIndustryWebsiteStyle, getArchitectPrompt, detectIndustryKey } from '@/config/agentPrompts';
 import { extractWebsiteContent } from '@/lib/services/websiteAnalyzer';
 import { selectStyle, formatStyleName, type DesignStyle } from '@/lib/services/styleSelector';
 import { getIndustryContext } from '@/config/industryContext';
@@ -139,7 +139,7 @@ export async function POST(
 
       // Generate website using AI
       currentStage = 'generation';
-      const websiteFiles = await generateWebsiteWithAI(prompt, emitProgress);
+      const websiteFiles = await generateWebsiteWithAI(prompt, industry, emitProgress);
 
       if (!websiteFiles) {
         const errorData = formatSSE('error', { error: 'Failed to generate website', stage: currentStage });
@@ -429,6 +429,7 @@ No markdown, no explanations - ONLY the JSON.`;
 
 async function generateWebsiteWithAI(
   prompt: string,
+  industry?: string,
   onProgress?: (stage: string, message: string) => Promise<void>
 ): Promise<Array<{ path: string; content: string; type: string }> | null> {
   if (!OPENROUTER_API_KEY) {
@@ -438,6 +439,11 @@ async function generateWebsiteWithAI(
 
   try {
     await onProgress?.('generation', 'Sending request to AI...');
+
+    // Get industry-specific architect prompt
+    const industryKey = detectIndustryKey(industry || '');
+    const architectPrompt = getArchitectPrompt('html', industryKey);
+    console.log('[GenerateWebsite] Using industry template:', industryKey);
 
     const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
       method: 'POST',
@@ -449,7 +455,7 @@ async function generateWebsiteWithAI(
       body: JSON.stringify({
         model: 'anthropic/claude-3.5-sonnet',
         messages: [
-          { role: 'system', content: ARCHITECT_SYSTEM_PROMPT },
+          { role: 'system', content: architectPrompt },
           { role: 'user', content: prompt },
         ],
         temperature: 0.7,

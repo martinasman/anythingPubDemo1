@@ -3,7 +3,7 @@ import { generateText } from 'ai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { createClient } from '@supabase/supabase-js';
 import type { WebsiteArtifact } from '@/types/database';
-import { ARCHITECT_SYSTEM_PROMPT, getArchitectPrompt } from '@/config/agentPrompts';
+import { getArchitectPrompt, detectIndustryKey } from '@/config/agentPrompts';
 import {
   PATTERN_REGISTRY,
   resolvePatternDependencies,
@@ -77,8 +77,13 @@ async function generateHTMLSite(params: z.infer<typeof codeGenSchema> & { projec
     const personality = analyzeBusinessPersonality(businessDescription);
     const designAdaptations = getDesignAdaptations(personality);
 
+    // Get industry-specific architect prompt
+    const industryKey = detectIndustryKey(businessDescription);
+    const architectPrompt = getArchitectPrompt('html', industryKey);
+    console.log('[Code Tool] Using industry template:', industryKey);
+
     // Build the prompt with world-class design standards
-    const prompt = `${ARCHITECT_SYSTEM_PROMPT}
+    const prompt = `${architectPrompt}
 
 ===== PROJECT BRIEF =====
 

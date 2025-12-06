@@ -2,61 +2,70 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Paperclip, ChevronDown, Globe, Lightbulb, Mic, ArrowUp, Search } from 'lucide-react';
-import { searchModels, type Model } from '@/lib/services/openRouter';
+import { Paperclip, ChevronDown, Globe, Lightbulb, Mic, ArrowUp } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useModelStore } from '@/store/modelStore';
+import Image from 'next/image';
+
+// Curated top models with provider info
+interface TopModel {
+  id: string;
+  name: string;
+  provider: string;
+  providerLogo: string;
+}
+
+const TOP_MODELS: Record<string, TopModel[]> = {
+  Google: [
+    { id: 'google/gemini-2.5-flash-preview', name: 'Gemini 2.5 Flash', provider: 'Google', providerLogo: '/logos/google.svg' },
+    { id: 'google/gemini-3-pro-preview', name: 'Gemini 3 Pro Preview', provider: 'Google', providerLogo: '/logos/google.svg' },
+  ],
+  Anthropic: [
+    { id: 'anthropic/claude-opus-4.5', name: 'Claude Opus 4.5', provider: 'Anthropic', providerLogo: '/logos/anthropic.svg' },
+    { id: 'anthropic/claude-sonnet-4.5', name: 'Claude Sonnet 4.5', provider: 'Anthropic', providerLogo: '/logos/anthropic.svg' },
+    { id: 'anthropic/claude-haiku-4.5', name: 'Claude Haiku 4.5', provider: 'Anthropic', providerLogo: '/logos/anthropic.svg' },
+  ],
+  xAI: [
+    { id: 'x-ai/grok-4.1', name: 'Grok 4.1', provider: 'xAI', providerLogo: '/logos/xai.svg' },
+  ],
+  OpenAI: [
+    { id: 'openai/gpt-5-pro', name: 'GPT-5 Pro', provider: 'OpenAI', providerLogo: '/logos/openai.svg' },
+    { id: 'openai/gpt-5.1', name: 'GPT-5.1', provider: 'OpenAI', providerLogo: '/logos/openai.svg' },
+  ],
+  DeepSeek: [
+    { id: 'deepseek/deepseek-v3.2', name: 'DeepSeek V3.2', provider: 'DeepSeek', providerLogo: '/logos/deepseek.svg' },
+    { id: 'deepseek/deepseek-r1', name: 'DeepSeek R1', provider: 'DeepSeek', providerLogo: '/logos/deepseek.svg' },
+  ],
+  Moonshot: [
+    { id: 'moonshotai/kimi-k2', name: 'Kimi K2', provider: 'Moonshot', providerLogo: '/logos/moonshot.svg' },
+  ],
+};
+
+// Flatten for easy lookup
+const ALL_MODELS = Object.values(TOP_MODELS).flat();
+const DEFAULT_MODEL = ALL_MODELS.find(m => m.id === 'google/gemini-3-pro-preview') || ALL_MODELS[0];
 
 export default function HeroInput() {
   const router = useRouter();
   const { user } = useAuth();
   const [value, setValue] = useState('');
-  const [filteredModels, setFilteredModels] = useState<Model[]>([]);
+  const [selectedModel, setSelectedModel] = useState<TopModel>(DEFAULT_MODEL);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [webEnabled, setWebEnabled] = useState(false);
   const [thinkEnabled, setThinkEnabled] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-
-  // Use global model store
-  const { models, selectedModel, isLoading: modelsLoading, loadModels, setSelectedModel } = useModelStore();
-
-  // Load models on mount (will skip if already loaded)
-  useEffect(() => {
-    loadModels();
-  }, [loadModels]);
-
-  // Initialize filtered models when models load
-  useEffect(() => {
-    setFilteredModels(models);
-  }, [models]);
-
-  // Handle search
-  useEffect(() => {
-    setFilteredModels(searchModels(models, searchQuery));
-  }, [searchQuery, models]);
 
   // Click outside to close dropdown
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsModelDropdownOpen(false);
-        setSearchQuery('');
       }
     }
 
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-
-  // Focus search input when dropdown opens
-  useEffect(() => {
-    if (isModelDropdownOpen && searchInputRef.current) {
-      searchInputRef.current.focus();
-    }
-  }, [isModelDropdownOpen]);
 
   const hasInput = value.trim().length > 0;
 
@@ -69,7 +78,7 @@ export default function HeroInput() {
     if (!user) {
       sessionStorage.setItem('pendingProject', JSON.stringify({
         prompt: value,
-        modelId: selectedModel?.id || 'google/gemini-3-pro-preview',
+        modelId: selectedModel.id,
       }));
       router.push('/signin?redirect=/');
       return;
@@ -79,12 +88,22 @@ export default function HeroInput() {
 
     // Navigate immediately - project creation happens in the new page
     const encodedPrompt = encodeURIComponent(value);
-    const modelId = selectedModel?.id || 'google/gemini-3-pro-preview';
-    router.push(`/p/new?prompt=${encodedPrompt}&model=${encodeURIComponent(modelId)}`);
+    router.push(`/p/new?prompt=${encodedPrompt}&model=${encodeURIComponent(selectedModel.id)}`);
   };
 
   return (
     <div className="w-full max-w-2xl mx-auto">
+      {/* Title */}
+      <h1
+        className="text-4xl md:text-5xl text-center mb-8"
+        style={{
+          fontFamily: '"Times New Roman", Times, serif',
+          color: 'var(--text-primary)',
+        }}
+      >
+        Prompt to profit
+      </h1>
+
       <form onSubmit={handleSubmit}>
         {/* Animated Gradient Border Wrapper */}
         <div className="relative p-[1px] rounded-2xl overflow-visible">
@@ -111,7 +130,7 @@ export default function HeroInput() {
             placeholder="Ask anything..."
             className="w-full px-4 pt-4 pb-16 text-sm text-black dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 resize-none focus:outline-none bg-transparent"
             rows={1}
-            style={{ minHeight: '100px' }}
+            style={{ minHeight: '180px' }}
             disabled={isSubmitting}
           />
 
@@ -119,6 +138,7 @@ export default function HeroInput() {
           <div className="flex items-center gap-1.5">
             {/* Attach Button */}
             <button
+              type="button"
               className="flex items-center gap-1 px-2 h-6 text-xs text-zinc-600 dark:text-slate-400 hover:text-zinc-900 dark:hover:text-slate-100 hover:bg-zinc-50 dark:hover:bg-slate-800 rounded transition-colors"
               aria-label="Attach file"
               title="Attach file"
@@ -130,18 +150,19 @@ export default function HeroInput() {
             {/* Model Switcher Dropdown */}
             <div className="relative" ref={dropdownRef}>
               <button
+                type="button"
                 onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
-                className="flex items-center gap-1 px-2 h-6 text-xs text-zinc-700 dark:text-slate-300 hover:bg-zinc-50 dark:hover:bg-slate-800 rounded transition-colors border border-zinc-200 dark:border-slate-700"
+                className="flex items-center gap-1.5 px-2 h-6 text-xs text-zinc-700 dark:text-slate-300 hover:bg-zinc-50 dark:hover:bg-slate-800 rounded transition-colors border border-zinc-200 dark:border-slate-700"
                 aria-label="Select model"
-                disabled={modelsLoading}
               >
-                <span className="font-medium">
-                  {modelsLoading
-                    ? 'Loading...'
-                    : selectedModel
-                      ? selectedModel.name
-                      : 'Select Model'}
-                </span>
+                <Image
+                  src={selectedModel.providerLogo}
+                  alt={selectedModel.provider}
+                  width={14}
+                  height={14}
+                  className="rounded-sm"
+                />
+                <span className="font-medium">{selectedModel.name}</span>
                 <ChevronDown
                   size={12}
                   strokeWidth={1.5}
@@ -149,69 +170,48 @@ export default function HeroInput() {
                 />
               </button>
 
-              {isModelDropdownOpen && !modelsLoading && (
-                <div className="absolute left-0 bottom-full mb-2 w-96 bg-white dark:bg-slate-800 border border-zinc-200 dark:border-slate-700 rounded-lg shadow-[0_20px_50px_-12px_rgba(0,0,0,0.15)] dark:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] overflow-hidden z-50">
-                  {/* Search Input */}
-                  <div className="p-3 border-b border-zinc-200 dark:border-slate-700">
-                    <div className="relative">
-                      <Search
-                        size={14}
-                        className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400"
-                      />
-                      <input
-                        ref={searchInputRef}
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search models..."
-                        className="w-full pl-9 pr-3 py-2 text-xs bg-zinc-50 dark:bg-slate-900 border border-zinc-200 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 text-zinc-900 dark:text-slate-100"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Models List */}
-                  <div className="max-h-96 overflow-y-auto">
-                    {filteredModels.length === 0 ? (
-                      <div className="px-4 py-8 text-center text-xs text-zinc-400">
-                        No models found
+              {isModelDropdownOpen && (
+                <div className="absolute left-0 bottom-full mb-2 w-72 bg-white dark:bg-slate-800 border border-zinc-200 dark:border-slate-700 rounded-lg shadow-[0_20px_50px_-12px_rgba(0,0,0,0.15)] dark:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] overflow-hidden z-50">
+                  {/* Models List by Category */}
+                  <div className="max-h-[400px] overflow-y-auto py-2">
+                    {Object.entries(TOP_MODELS).map(([provider, models]) => (
+                      <div key={provider}>
+                        {/* Provider Header */}
+                        <div className="px-3 py-1.5 text-[10px] font-semibold text-zinc-400 dark:text-slate-500 uppercase tracking-wider">
+                          {provider}
+                        </div>
+                        {/* Models */}
+                        {models.map((model) => (
+                          <button
+                            key={model.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedModel(model);
+                              setIsModelDropdownOpen(false);
+                            }}
+                            className={`w-full px-3 py-2 text-left hover:bg-zinc-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-2.5 ${
+                              selectedModel.id === model.id
+                                ? 'bg-zinc-50 dark:bg-slate-700'
+                                : ''
+                            }`}
+                          >
+                            <Image
+                              src={model.providerLogo}
+                              alt={model.provider}
+                              width={18}
+                              height={18}
+                              className="rounded-sm flex-shrink-0"
+                            />
+                            <span className="font-medium text-sm text-zinc-900 dark:text-slate-100">
+                              {model.name}
+                            </span>
+                            {selectedModel.id === model.id && (
+                              <span className="ml-auto text-emerald-500">✓</span>
+                            )}
+                          </button>
+                        ))}
                       </div>
-                    ) : (
-                      filteredModels.map((model) => (
-                        <button
-                          key={model.id}
-                          onClick={() => {
-                            setSelectedModel(model);
-                            setIsModelDropdownOpen(false);
-                            setSearchQuery('');
-                          }}
-                          className={`w-full px-3 py-2 text-sm text-left hover:bg-zinc-50 dark:hover:bg-slate-700 transition-colors ${
-                            selectedModel?.id === model.id
-                              ? 'bg-zinc-50 dark:bg-slate-700'
-                              : ''
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex-1 min-w-0">
-                              <div className="font-medium text-sm text-zinc-900 dark:text-slate-100 truncate">
-                                {model.name}
-                              </div>
-                              <div className="text-xs text-zinc-500 dark:text-slate-400 mt-0.5">
-                                {model.provider} • {model.contextLength.toLocaleString()} tokens
-                              </div>
-                            </div>
-                            <div className="text-xs text-zinc-400 dark:text-slate-500 whitespace-nowrap">
-                              ${(model.pricing.prompt * 1_000_000).toFixed(2)}/M
-                            </div>
-                          </div>
-                        </button>
-                      ))
-                    )}
-                  </div>
-
-                  {/* Footer */}
-                  <div className="p-2 border-t border-zinc-200 dark:border-slate-700 text-xs text-zinc-400 dark:text-slate-500 text-center">
-                    {filteredModels.length} model{filteredModels.length !== 1 ? 's' : ''}{' '}
-                    available
+                    ))}
                   </div>
                 </div>
               )}
@@ -219,6 +219,7 @@ export default function HeroInput() {
 
             {/* Web Toggle */}
             <button
+              type="button"
               onClick={() => setWebEnabled(!webEnabled)}
               className={`flex items-center gap-1 px-2 h-6 text-xs rounded transition-colors ${
                 webEnabled
@@ -234,6 +235,7 @@ export default function HeroInput() {
 
             {/* Think Toggle */}
             <button
+              type="button"
               onClick={() => setThinkEnabled(!thinkEnabled)}
               className={`flex items-center gap-1 px-2 h-6 text-xs rounded transition-colors ${
                 thinkEnabled
