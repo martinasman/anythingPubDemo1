@@ -1,4 +1,4 @@
-# Anything Platform - AI Code Generation System
+# Anything
 
 A powerful AI-powered code generation platform that creates complete web applications from natural language descriptions.
 
