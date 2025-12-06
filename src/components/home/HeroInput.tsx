@@ -4,7 +4,6 @@ import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Paperclip, ChevronDown, Globe, Lightbulb, Mic, ArrowUp } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import Image from 'next/image';
 
 // Curated top models with provider info
 interface TopModel {
@@ -155,7 +154,8 @@ export default function HeroInput() {
                 className="flex items-center gap-1.5 px-2 h-6 text-xs text-zinc-700 dark:text-slate-300 hover:bg-zinc-50 dark:hover:bg-slate-800 rounded transition-colors border border-zinc-200 dark:border-slate-700"
                 aria-label="Select model"
               >
-                <Image
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
                   src={selectedModel.providerLogo}
                   alt={selectedModel.provider}
                   width={14}
@@ -195,7 +195,8 @@ export default function HeroInput() {
                                 : ''
                             }`}
                           >
-                            <Image
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
                               src={model.providerLogo}
                               alt={model.provider}
                               width={18}

@@ -1,14 +1,50 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { ArrowUp, Plus, Paperclip, ChevronDown, Search, Loader2 } from 'lucide-react';
+import { ArrowUp, Plus, Paperclip, ChevronDown } from 'lucide-react';
 import Image from 'next/image';
 import { useProjectStore, type WorkspaceView } from '@/store/projectStore';
-import { useModelStore } from '@/store/modelStore';
-import { searchModels, type Model } from '@/lib/services/openRouter';
 import { TOOL_DISPLAY_NAMES } from '@/store/projectStore';
 import { WorkSection, type WorkItem, type ProgressStage } from './WorkSection';
 import { CodeChangeViewer, type CodeChange } from './CodeChangeViewer';
+
+// Curated top models with provider info (same as HeroInput)
+interface TopModel {
+  id: string;
+  name: string;
+  provider: string;
+  providerLogo: string;
+}
+
+const TOP_MODELS: Record<string, TopModel[]> = {
+  Google: [
+    { id: 'google/gemini-2.5-flash-preview', name: 'Gemini 2.5 Flash', provider: 'Google', providerLogo: '/logos/google.svg' },
+    { id: 'google/gemini-3-pro-preview', name: 'Gemini 3 Pro Preview', provider: 'Google', providerLogo: '/logos/google.svg' },
+  ],
+  Anthropic: [
+    { id: 'anthropic/claude-opus-4.5', name: 'Claude Opus 4.5', provider: 'Anthropic', providerLogo: '/logos/anthropic.svg' },
+    { id: 'anthropic/claude-sonnet-4.5', name: 'Claude Sonnet 4.5', provider: 'Anthropic', providerLogo: '/logos/anthropic.svg' },
+    { id: 'anthropic/claude-haiku-4.5', name: 'Claude Haiku 4.5', provider: 'Anthropic', providerLogo: '/logos/anthropic.svg' },
+  ],
+  xAI: [
+    { id: 'x-ai/grok-4.1', name: 'Grok 4.1', provider: 'xAI', providerLogo: '/logos/xai.svg' },
+  ],
+  OpenAI: [
+    { id: 'openai/gpt-5-pro', name: 'GPT-5 Pro', provider: 'OpenAI', providerLogo: '/logos/openai.svg' },
+    { id: 'openai/gpt-5.1', name: 'GPT-5.1', provider: 'OpenAI', providerLogo: '/logos/openai.svg' },
+  ],
+  DeepSeek: [
+    { id: 'deepseek/deepseek-v3.2', name: 'DeepSeek V3.2', provider: 'DeepSeek', providerLogo: '/logos/deepseek.svg' },
+    { id: 'deepseek/deepseek-r1', name: 'DeepSeek R1', provider: 'DeepSeek', providerLogo: '/logos/deepseek.svg' },
+  ],
+  Moonshot: [
+    { id: 'moonshotai/kimi-k2', name: 'Kimi K2', provider: 'Moonshot', providerLogo: '/logos/moonshot.svg' },
+  ],
+};
+
+// Flatten for easy lookup
+const ALL_MODELS = Object.values(TOP_MODELS).flat();
+const DEFAULT_MODEL = ALL_MODELS.find(m => m.id === 'google/gemini-3-pro-preview') || ALL_MODELS[0];
 
 interface ChatPanelProps {
   projectName?: string;
@@ -78,66 +114,47 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
     ? artifacts.leads?.leads.find(l => l.id === canvasState.leadId)
     : null;
 
-  // Use global model store (already loaded from homepage)
-  const { models, selectedModel, isLoading: modelsLoading, loadModels, setSelectedModel, getModelById } = useModelStore();
-  const [filteredModels, setFilteredModels] = useState<Model[]>([]);
+  // Local model state using curated TOP_MODELS (same as HeroInput)
+  const [selectedModel, setSelectedModel] = useState<TopModel>(() => {
+    // Initialize from project's selected model or default
+    if (selectedModelId) {
+      const found = ALL_MODELS.find(m => m.id === selectedModelId);
+      if (found) return found;
+    }
+    return DEFAULT_MODEL;
+  });
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [workItems, setWorkItems] = useState<Record<string, WorkItem>>({});
   const [codeChanges, setCodeChanges] = useState<Record<string, CodeChange[]>>({});
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const submissionLockRef = useRef(false);
   const handleSendMessageRef = useRef<((messageText?: string) => Promise<void>) | undefined>(undefined);
 
-  // Load models if not already loaded (fallback for direct navigation)
+  // Sync selected model with project's model ID when it changes externally
   useEffect(() => {
-    loadModels();
-  }, [loadModels]);
-
-  // Sync selected model with project's model ID
-  useEffect(() => {
-    if (selectedModelId && models.length > 0) {
-      const projectModel = getModelById(selectedModelId);
-      if (projectModel && projectModel.id !== selectedModel?.id) {
-        setSelectedModel(projectModel);
+    if (selectedModelId) {
+      const found = ALL_MODELS.find(m => m.id === selectedModelId);
+      if (found && found.id !== selectedModel.id) {
+        setSelectedModel(found);
       }
     }
-  }, [selectedModelId, models, selectedModel?.id, getModelById, setSelectedModel]);
-
-  // Initialize filtered models when models load
-  useEffect(() => {
-    setFilteredModels(models);
-  }, [models]);
-
-  // Handle search
-  useEffect(() => {
-    setFilteredModels(searchModels(models, searchQuery));
-  }, [searchQuery, models]);
+  }, [selectedModelId, selectedModel.id]);
 
   // Click outside to close dropdown
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsModelDropdownOpen(false);
-        setSearchQuery('');
       }
     }
 
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-
-  // Focus search input when dropdown opens
-  useEffect(() => {
-    if (isModelDropdownOpen && searchInputRef.current) {
-      searchInputRef.current.focus();
-    }
-  }, [isModelDropdownOpen]);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -725,16 +742,19 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
                 <button
                   type="button"
                   onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
-                  className="flex items-center gap-1 px-2 h-6 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 rounded transition-colors border border-zinc-200 dark:border-zinc-700"
+                  className="flex items-center gap-1.5 px-2 h-6 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 rounded transition-colors border border-zinc-200 dark:border-zinc-700"
                   aria-label="Select model"
-                  disabled={modelsLoading}
                 >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={selectedModel.providerLogo}
+                    alt={selectedModel.provider}
+                    width={14}
+                    height={14}
+                    className="rounded-sm"
+                  />
                   <span className="font-medium max-w-[120px] truncate">
-                    {modelsLoading
-                      ? 'Loading...'
-                      : selectedModel
-                        ? selectedModel.name
-                        : 'Select Model'}
+                    {selectedModel.name}
                   </span>
                   <ChevronDown
                     size={12}
@@ -743,58 +763,50 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
                   />
                 </button>
 
-                {isModelDropdownOpen && !modelsLoading && (
-                  <div className="absolute left-0 bottom-full mb-2 w-96 rounded-lg overflow-hidden z-50" style={{ background: 'var(--surface-3)', boxShadow: 'var(--shadow-xl)' }}>
-                    {/* Search Input */}
-                    <div className="p-3 border-b border-zinc-100 dark:border-zinc-700/50">
-                      <div className="relative">
-                        <Search
-                          size={14}
-                          className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400"
-                        />
-                        <input
-                          ref={searchInputRef}
-                          type="text"
-                          value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
-                          placeholder="Search models..."
-                          className="w-full pl-9 pr-3 py-2 text-xs bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 text-zinc-900 dark:text-zinc-100"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Models List */}
-                    <div className="max-h-96 overflow-y-auto">
-                      {filteredModels.length === 0 ? (
-                        <div className="px-4 py-8 text-center text-xs text-zinc-400">
-                          No models found
+                {isModelDropdownOpen && (
+                  <div className="absolute left-0 bottom-full mb-2 w-72 bg-white dark:bg-slate-800 border border-zinc-200 dark:border-slate-700 rounded-lg shadow-[0_20px_50px_-12px_rgba(0,0,0,0.15)] dark:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] overflow-hidden z-50">
+                    {/* Models List by Category */}
+                    <div className="max-h-[400px] overflow-y-auto py-2">
+                      {Object.entries(TOP_MODELS).map(([provider, models]) => (
+                        <div key={provider}>
+                          {/* Provider Header */}
+                          <div className="px-3 py-1.5 text-[10px] font-semibold text-zinc-400 dark:text-slate-500 uppercase tracking-wider">
+                            {provider}
+                          </div>
+                          {/* Models */}
+                          {models.map((model) => (
+                            <button
+                              key={model.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedModel(model);
+                                setSelectedModelId(model.id);
+                                setIsModelDropdownOpen(false);
+                              }}
+                              className={`w-full px-3 py-2 text-left hover:bg-zinc-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-2.5 ${
+                                selectedModel.id === model.id
+                                  ? 'bg-zinc-50 dark:bg-slate-700'
+                                  : ''
+                              }`}
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={model.providerLogo}
+                                alt={model.provider}
+                                width={18}
+                                height={18}
+                                className="rounded-sm flex-shrink-0"
+                              />
+                              <span className="font-medium text-sm text-zinc-900 dark:text-slate-100">
+                                {model.name}
+                              </span>
+                              {selectedModel.id === model.id && (
+                                <span className="ml-auto text-emerald-500">✓</span>
+                              )}
+                            </button>
+                          ))}
                         </div>
-                      ) : (
-                        filteredModels.map((model) => (
-                          <button
-                            key={model.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedModel(model);
-                              setSelectedModelId(model.id);
-                              setIsModelDropdownOpen(false);
-                              setSearchQuery('');
-                            }}
-                            className={`w-full px-4 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors ${
-                              selectedModel?.id === model.id
-                                ? 'bg-zinc-50 dark:bg-zinc-700'
-                                : ''
-                            }`}
-                          >
-                            <div className="text-xs font-medium text-zinc-900 dark:text-zinc-100">
-                              {model.name}
-                            </div>
-                            <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
-                              {model.id}
-                            </div>
-                          </button>
-                        ))
-                      )}
+                      ))}
                     </div>
                   </div>
                 )}
