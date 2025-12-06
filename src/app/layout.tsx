@@ -1,19 +1,13 @@
 import type { Metadata } from "next";
-import { Inter, DM_Sans, Playfair_Display } from "next/font/google";
+import { Geist, Playfair_Display } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider } from "@/contexts/AuthContext";
 
-const inter = Inter({
-  variable: "--font-inter",
+const geist = Geist({
+  variable: "--font-geist",
   subsets: ["latin"],
   display: "swap",
-});
-
-const dmSans = DM_Sans({
-  variable: "--font-dm-sans",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
 });
 
 const playfair = Playfair_Display({
@@ -35,7 +29,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body
-        className={`${inter.variable} ${dmSans.variable} ${playfair.variable} antialiased font-sans`}
+        className={`${geist.variable} ${playfair.variable} antialiased font-sans`}
       >
         <AuthProvider>
           <ThemeProvider>

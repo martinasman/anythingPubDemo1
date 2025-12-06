@@ -96,6 +96,13 @@ interface ProjectState {
   canvasState: CanvasState;
   toolStatuses: Map<string, ToolStatus>;
 
+  // Element selection for visual editing
+  selectedElementSelector: string | null;
+  selectedElementInfo: { selector: string; tagName: string; text?: string } | null;
+  isSelectMode: boolean;
+  setSelectedElementSelector: (selector: string | null) => void;
+  setSelectedElementInfo: (info: { selector: string; tagName: string; text?: string } | null) => void;
+  setIsSelectMode: (mode: boolean) => void;
 
   // Actions
   setInitialData: (
@@ -167,8 +174,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   hasSeenOnboarding: typeof window !== 'undefined' ? localStorage.getItem('hasSeenOnboarding') === 'true' : false,
   canvasState: { type: 'empty' } as CanvasState,
   toolStatuses: new Map<string, ToolStatus>(),
+  selectedElementSelector: null,
+  selectedElementInfo: null,
+  isSelectMode: false,
 
   // Actions
+  setSelectedElementSelector: (selector) => set({ selectedElementSelector: selector }),
+  setSelectedElementInfo: (info) => set({ selectedElementInfo: info }),
+  setIsSelectMode: (mode) => set({ isSelectMode: mode }),
   setInitialData: (project, messages, rawArtifacts) => {
     console.log('[Store] setInitialData called with', rawArtifacts.length, 'artifacts');
     const artifacts = {

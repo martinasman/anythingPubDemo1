@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { ArrowUp, Plus, Paperclip, ChevronDown } from 'lucide-react';
+import React from 'react';
+import { ArrowUp, Plus, Paperclip, ChevronDown, Pencil, MessageSquare, Lightbulb, MousePointer2, X, Check } from 'lucide-react';
 import Image from 'next/image';
 import { useProjectStore, type WorkspaceView } from '@/store/projectStore';
 import { TOOL_DISPLAY_NAMES } from '@/store/projectStore';
@@ -50,6 +51,38 @@ interface ChatPanelProps {
   projectName?: string;
 }
 
+// ============================================
+// CHAT MODES
+// ============================================
+
+type ChatMode = 'edit' | 'chat' | 'plan';
+
+const CHAT_MODE_CONFIG: Record<ChatMode, {
+  label: string;
+  icon: typeof Pencil;
+  placeholder: string;
+  description: string;
+}> = {
+  edit: {
+    label: 'Edit',
+    icon: Pencil,
+    placeholder: 'Describe what to change...',
+    description: 'Make changes to your website, brand, or pricing',
+  },
+  chat: {
+    label: 'Chat',
+    icon: MessageSquare,
+    placeholder: 'Ask anything...',
+    description: 'Chat freely without making changes',
+  },
+  plan: {
+    label: 'Plan',
+    icon: Lightbulb,
+    placeholder: 'What do you want to build?',
+    description: 'Plan and strategize before building',
+  },
+};
+
 // Placeholder text based on workspace view
 const PLACEHOLDER_BY_VIEW: Record<WorkspaceView, string> = {
   HOME: 'Ask anything...',
@@ -60,12 +93,13 @@ const PLACEHOLDER_BY_VIEW: Record<WorkspaceView, string> = {
   ADS: 'Create ads and marketing content...',
 };
 
-// Get placeholder based on context (lead-aware)
-const getPlaceholder = (workspaceView: WorkspaceView, currentLeadName: string | null): string => {
+// Get placeholder based on context (mode-aware, lead-aware)
+const getPlaceholder = (workspaceView: WorkspaceView, currentLeadName: string | null, chatMode: ChatMode): string => {
   if (currentLeadName) {
     return `Ask about ${currentLeadName}...`;
   }
-  return PLACEHOLDER_BY_VIEW[workspaceView];
+  // Use mode-specific placeholder
+  return CHAT_MODE_CONFIG[chatMode].placeholder;
 };
 
 // Tool-specific emojis for context-aware loading messages
@@ -107,6 +141,13 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
     failTool,
     resetTools,
     refreshArtifact,
+    // Element selection for visual editing
+    selectedElementSelector,
+    setSelectedElementSelector,
+    selectedElementInfo,
+    setSelectedElementInfo,
+    isSelectMode,
+    setIsSelectMode,
   } = useProjectStore();
 
   // Get current lead if viewing lead detail
@@ -124,11 +165,14 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
     return DEFAULT_MODEL;
   });
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+  const [isModeDropdownOpen, setIsModeDropdownOpen] = useState(false);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [chatMode, setChatMode] = useState<ChatMode>('edit');
   const [workItems, setWorkItems] = useState<Record<string, WorkItem>>({});
   const [codeChanges, setCodeChanges] = useState<Record<string, CodeChange[]>>({});
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const modeDropdownRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const submissionLockRef = useRef(false);
@@ -144,11 +188,14 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
     }
   }, [selectedModelId, selectedModel.id]);
 
-  // Click outside to close dropdown
+  // Click outside to close dropdowns
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsModelDropdownOpen(false);
+      }
+      if (modeDropdownRef.current && !modeDropdownRef.current.contains(event.target as Node)) {
+        setIsModeDropdownOpen(false);
       }
     }
 
@@ -165,8 +212,12 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
 
   // Handle message submission
   const handleSendMessage = useCallback(async (messageText?: string) => {
-    const textToSend = messageText || input.trim();
-    console.log('[ChatPanel] handleSendMessage called', { textToSend, isLoading, projectId: project?.id, locked: submissionLockRef.current });
+    const rawText = messageText || input.trim();
+    // Prepend element selector context if an element is selected
+    const textToSend = selectedElementSelector
+      ? `[Targeting element: ${selectedElementSelector}] ${rawText}`
+      : rawText;
+    console.log('[ChatPanel] handleSendMessage called', { textToSend, isLoading, projectId: project?.id, locked: submissionLockRef.current, selectedElementSelector });
 
     // Prevent double submission with lock
     if (submissionLockRef.current) {
@@ -186,15 +237,21 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
     setInput('');
     setIsLoading(true);
 
+    // Clear selected element after sending (user intent has been captured)
+    if (selectedElementSelector) {
+      setSelectedElementSelector(null);
+      setSelectedElementInfo(null);
+    }
+
     // Mark that generation has started - this shows the ghost cards
     setHasStartedGeneration(true);
 
-    // Add user message optimistically to store
+    // Add user message optimistically to store (show raw text to user, not the prefixed version)
     const userMessage = {
       id: crypto.randomUUID(),
       project_id: project.id,
       role: 'user' as const,
-      content: textToSend,
+      content: rawText, // Display the raw text without selector prefix
       created_at: new Date().toISOString(),
     };
     addMessage(userMessage);
@@ -226,6 +283,7 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
           projectId: project.id,
           modelId: selectedModelId,
           assistantMessageId, // Pass assistant message ID for DB save
+          chatMode, // Pass chat mode for prompt adjustment
         }),
         signal: abortControllerRef.current.signal,
       });
@@ -263,6 +321,20 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
         'remix_website': 'SITE',
       };
 
+      // Tool name to artifact type for refresh (MUST be defined before streaming loop)
+      const toolNameToArtifactType: Record<string, 'website_code' | 'identity' | 'market_research' | 'business_plan' | 'leads' | 'outreach' | 'crawled_site'> = {
+        'generate_website_files': 'website_code',
+        'edit_website': 'website_code',
+        'generate_brand_identity': 'identity',
+        'edit_identity': 'identity',
+        'perform_market_research': 'market_research',
+        'generate_business_plan': 'business_plan',
+        'edit_pricing': 'business_plan',
+        'generate_leads': 'leads',
+        'generate_outreach_scripts': 'outreach',
+        'remix_website': 'website_code',
+      };
+
       // Reset work items and code changes tracking
       setWorkItems({});
       setCodeChanges({});
@@ -270,6 +342,8 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
 
       // Track if we've started any tools (for canvas state transition)
       let hasStartedAnyTool = false;
+      // Track which generation tool ran for artifact-specific validation
+      let activeGenerationTool: string | null = null;
 
       // Read the plain text stream and update message progressively
       const reader = response.body?.getReader();
@@ -289,21 +363,55 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
               setToolRunning(toolType, false);
             });
 
-            // Transition to overview only if artifacts actually exist
+            // Transition to overview only if the specific artifact is ready
             // Don't show overview before website/brand/etc are ready
-            if (hasStartedAnyTool) {
-              const { artifacts } = useProjectStore.getState();
-              const hasArtifacts = Object.values(artifacts).some(a => a !== null);
+            if (hasStartedAnyTool && activeGenerationTool) {
+              // Map tool names to artifact keys
+              const toolToArtifactKey: Record<string, string> = {
+                'generate_website_files': 'website',
+                'edit_website': 'website',
+                'remix_website': 'website',
+                'generate_brand_identity': 'identity',
+                'edit_identity': 'identity',
+                'perform_market_research': 'research',
+                'generate_business_plan': 'businessPlan',
+                'edit_pricing': 'businessPlan',
+              };
 
-              if (hasArtifacts) {
-                // Small delay to let the user see the completion state
-                setTimeout(() => {
-                  setCanvasState({ type: 'overview' });
-                }, 500);
-              } else {
-                // Stay on loading canvas - artifacts still being processed
-                console.log('[ChatPanel] Stream complete but no artifacts yet - staying on loading');
-              }
+              const requiredArtifactKey = toolToArtifactKey[activeGenerationTool];
+
+              // Poll for the specific artifact (max 6 attempts, 300ms each = 1.8 seconds)
+              const toolName = activeGenerationTool; // Capture for closure
+              const pollForArtifact = async () => {
+                for (let attempt = 0; attempt < 6; attempt++) {
+                  // Refresh the artifact from database
+                  const artifactType = toolNameToArtifactType[toolName];
+                  if (artifactType) {
+                    await refreshArtifact(artifactType);
+                  }
+
+                  // Check if artifact exists now
+                  const { artifacts } = useProjectStore.getState();
+                  const artifactExists = requiredArtifactKey
+                    ? artifacts[requiredArtifactKey as keyof typeof artifacts] !== null
+                    : Object.values(artifacts).some(a => a !== null);
+
+                  if (artifactExists) {
+                    console.log('[ChatPanel] Artifact ready, transitioning to overview');
+                    setCanvasState({ type: 'overview' });
+                    return;
+                  }
+
+                  console.log(`[ChatPanel] Waiting for artifact... attempt ${attempt + 1}/6`);
+                  await new Promise(resolve => setTimeout(resolve, 300));
+                }
+
+                // After ~2 seconds, transition anyway (with whatever state exists)
+                console.log('[ChatPanel] Timeout waiting for artifact, transitioning to overview');
+                setCanvasState({ type: 'overview' });
+              };
+
+              pollForArtifact();
             }
 
             // If no text was received, show completion message
@@ -328,6 +436,7 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
             const skipLoadingCanvas = toolName === 'generate_leads';
             if (!hasStartedAnyTool && isGenerationTool && !skipLoadingCanvas) {
               hasStartedAnyTool = true;
+              activeGenerationTool = toolName; // Track which tool for artifact validation
               setCanvasState({ type: 'loading' });
             }
 
@@ -351,20 +460,6 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
             const displayName = TOOL_DISPLAY_NAMES[toolName] || description;
             updateMessage(assistantMessageId, `${emoji} ${displayName}...`);
           }
-
-          // Tool name to artifact type for refresh
-          const toolNameToArtifactType: Record<string, 'website_code' | 'identity' | 'market_research' | 'business_plan' | 'leads' | 'outreach' | 'crawled_site'> = {
-            'generate_website_files': 'website_code',
-            'edit_website': 'website_code',
-            'generate_brand_identity': 'identity',
-            'edit_identity': 'identity',
-            'perform_market_research': 'market_research',
-            'generate_business_plan': 'business_plan',
-            'edit_pricing': 'business_plan',
-            'generate_leads': 'leads',
-            'generate_outreach_scripts': 'outreach',
-            'remix_website': 'website_code',
-          };
 
           // Parse [REMIX_CRAWL:url:message] markers for remix crawl progress
           const remixCrawlMatches = chunk.matchAll(/\[REMIX_CRAWL:([^:]+):([^\]]+)\]/g);
@@ -390,7 +485,8 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
           }
 
           // Parse [WORK_DONE:tool:duration] markers (tool completed)
-          const doneMatches = chunk.matchAll(/\[WORK_DONE:(\w+):([^\]]+)\]/g);
+          // Note: duration can be empty for fast tools (<0.5s), so use * not +
+          const doneMatches = chunk.matchAll(/\[WORK_DONE:(\w+):([^\]]*)\]/g);
           for (const match of doneMatches) {
             const [, toolName, duration] = match;
             const toolType = toolNameToType[toolName];
@@ -561,7 +657,7 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
       abortControllerRef.current = null;
       submissionLockRef.current = false; // Release lock
     }
-  }, [project?.id, isLoading, input, storeMessages, selectedModelId, addMessage, updateMessage, setToolRunning, setHasStartedGeneration, setWorkspaceView]);
+  }, [project?.id, isLoading, input, storeMessages, selectedModelId, addMessage, updateMessage, setToolRunning, setHasStartedGeneration, setWorkspaceView, selectedElementSelector, setSelectedElementSelector, setSelectedElementInfo]);
 
   // Keep ref updated with latest handleSendMessage
   useEffect(() => {
@@ -621,14 +717,14 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
                 >
                   {message.role === 'user' ? (
                     /* User message - keep in bubble */
-                    <div className="max-w-[80%] rounded-2xl px-4 py-3 text-sm bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100">
+                    <div className="max-w-[80%] rounded-2xl px-4 py-3 text-sm bg-zinc-200 dark:bg-[#262626] text-zinc-900 dark:text-zinc-100">
                       {message.content}
                     </div>
                   ) : (
                     /* AI message - display with icon */
                     <div className="flex gap-3 w-full max-w-full">
                       {/* AI Icon */}
-                      <div className="flex-shrink-0 w-7 h-7 rounded-full overflow-hidden bg-zinc-100 dark:bg-zinc-800">
+                      <div className="flex-shrink-0 w-7 h-7 rounded-full overflow-hidden bg-zinc-100 dark:bg-[#262626]">
                         <Image
                           src="/anythingicondark.png"
                           alt="AI"
@@ -650,7 +746,6 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
                         {hasWorkItems && (
                           <WorkSection
                             items={Object.values(workItems)}
-                            isStreaming={isLoading}
                           />
                         )}
 
@@ -668,8 +763,8 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
                             {isInitialLoading ? (
                               <div className="flex items-center gap-2">
                                 <span className="relative flex h-4 w-4">
-                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                                  <span className="relative inline-flex rounded-full h-4 w-4 bg-blue-500"></span>
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-zinc-400 dark:bg-zinc-500 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-4 w-4 bg-zinc-500 dark:bg-zinc-400"></span>
                                 </span>
                                 <span className="text-zinc-600 dark:text-zinc-400">
                                   {message.content.replace(/^[^\s]+\s/, '')}
@@ -704,6 +799,38 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
       <form onSubmit={handleSubmit}>
         <div className="p-1.5">
           <div className="relative rounded-2xl" style={{ background: 'var(--surface-2)', boxShadow: 'var(--shadow-md)' }}>
+            {/* Element Targeting Badge - show above textarea when element is selected */}
+            {selectedElementInfo && (
+              <div className="absolute top-2 left-3 right-3 flex items-center gap-2 px-3 py-2 bg-zinc-100 dark:bg-[#171717] border border-zinc-200 dark:border-zinc-700 rounded-lg z-10">
+                <MousePointer2 size={14} className="text-zinc-500 dark:text-zinc-400 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                      Targeting:
+                    </span>
+                    <code className="text-xs font-mono text-zinc-600 dark:text-zinc-400 truncate">
+                      &lt;{selectedElementInfo.tagName}&gt;
+                    </code>
+                  </div>
+                  {selectedElementInfo.text && (
+                    <p className="text-xs text-zinc-500 dark:text-zinc-500 truncate mt-0.5">
+                      "{selectedElementInfo.text}"
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedElementInfo(null);
+                    setSelectedElementSelector(null);
+                  }}
+                  className="p-1 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 rounded transition-colors"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -713,28 +840,89 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
                   handleSubmit(e as any);
                 }
               }}
-              placeholder={getPlaceholder(workspaceView, currentLead?.companyName ?? null)}
-              className="w-full pl-4 pr-12 pt-3 pb-12 text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 resize-none focus:outline-none bg-transparent rounded-2xl"
+              placeholder={getPlaceholder(workspaceView, currentLead?.companyName ?? null, chatMode)}
+              className={`w-full pl-4 pr-12 pb-12 text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 resize-none focus:outline-none bg-transparent rounded-2xl overflow-y-auto ${selectedElementInfo ? 'pt-16' : 'pt-3'}`}
               rows={1}
-              style={{ minHeight: '120px' }}
+              style={{ minHeight: '120px', maxHeight: '300px' }}
               disabled={isLoading}
             />
 
-            {/* Left Action Buttons */}
+            {/* Left Action Buttons - Order: Plus → Attach → Mode → Cursor → Model */}
             <div className="absolute bottom-3 left-3 flex items-center gap-1.5">
+              {/* Plus Button */}
               <button
                 type="button"
-                className="flex items-center justify-center w-7 h-7 text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg transition-all"
+                className="flex items-center justify-center w-7 h-7 text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-[#171717] rounded-lg transition-all"
                 aria-label="Add attachment"
               >
                 <Plus size={14} strokeWidth={1.5} />
               </button>
+
+              {/* Attach File Button */}
               <button
                 type="button"
-                className="flex items-center justify-center w-7 h-7 text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg transition-all"
+                className="flex items-center justify-center w-7 h-7 text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-[#171717] rounded-lg transition-all"
                 aria-label="Attach file"
               >
                 <Paperclip size={14} strokeWidth={1.5} />
+              </button>
+
+              {/* Mode Picker Dropdown */}
+              <div className="relative" ref={modeDropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => setIsModeDropdownOpen(!isModeDropdownOpen)}
+                  className="flex items-center gap-1.5 px-2 h-6 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-[#171717] rounded transition-colors border border-zinc-200 dark:border-zinc-700"
+                >
+                  {React.createElement(CHAT_MODE_CONFIG[chatMode].icon, { size: 12 })}
+                  <span className="font-medium">{CHAT_MODE_CONFIG[chatMode].label}</span>
+                  <ChevronDown size={12} className={`transition-transform ${isModeDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {isModeDropdownOpen && (
+                  <div className="absolute left-0 bottom-full mb-2 w-52 bg-white dark:bg-[#171717] border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-xl z-50 overflow-hidden">
+                    {(['edit', 'chat', 'plan'] as ChatMode[]).map((mode) => {
+                      const config = CHAT_MODE_CONFIG[mode];
+                      const isActive = chatMode === mode;
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => {
+                            setChatMode(mode);
+                            setIsModeDropdownOpen(false);
+                          }}
+                          className={`w-full px-3 py-2.5 text-left flex items-center gap-3 transition-colors ${
+                            isActive
+                              ? 'bg-zinc-100 dark:bg-[#262626]'
+                              : 'hover:bg-zinc-50 dark:hover:bg-[#262626]'
+                          }`}
+                        >
+                          {React.createElement(config.icon, { size: 14, className: 'text-zinc-500 dark:text-zinc-400 flex-shrink-0' })}
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{config.label}</div>
+                            <div className="text-xs text-zinc-500 dark:text-zinc-400">{config.description}</div>
+                          </div>
+                          {isActive && <Check size={14} className="text-zinc-900 dark:text-white flex-shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Cursor Mode Toggle */}
+              <button
+                type="button"
+                onClick={() => setIsSelectMode(!isSelectMode)}
+                className={`flex items-center justify-center w-7 h-7 rounded-lg transition-all ${
+                  isSelectMode
+                    ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900'
+                    : 'text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-[#171717]'
+                }`}
+                title={isSelectMode ? 'Exit selection mode' : 'Select element to edit'}
+              >
+                <MousePointer2 size={14} strokeWidth={1.5} />
               </button>
 
               {/* Model Picker Dropdown */}
@@ -742,7 +930,7 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
                 <button
                   type="button"
                   onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
-                  className="flex items-center gap-1.5 px-2 h-6 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 rounded transition-colors border border-zinc-200 dark:border-zinc-700"
+                  className="flex items-center gap-1.5 px-2 h-6 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-[#171717] rounded transition-colors border border-zinc-200 dark:border-zinc-700"
                   aria-label="Select model"
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -764,13 +952,13 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
                 </button>
 
                 {isModelDropdownOpen && (
-                  <div className="absolute left-0 bottom-full mb-2 w-72 bg-white dark:bg-slate-800 border border-zinc-200 dark:border-slate-700 rounded-lg shadow-[0_20px_50px_-12px_rgba(0,0,0,0.15)] dark:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] overflow-hidden z-50">
+                  <div className="absolute left-0 bottom-full mb-2 w-72 bg-white dark:bg-[#171717] border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-[0_20px_50px_-12px_rgba(0,0,0,0.15)] dark:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] overflow-hidden z-50">
                     {/* Models List by Category */}
                     <div className="max-h-[400px] overflow-y-auto py-2">
                       {Object.entries(TOP_MODELS).map(([provider, models]) => (
                         <div key={provider}>
                           {/* Provider Header */}
-                          <div className="px-3 py-1.5 text-[10px] font-semibold text-zinc-400 dark:text-slate-500 uppercase tracking-wider">
+                          <div className="px-3 py-1.5 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
                             {provider}
                           </div>
                           {/* Models */}
@@ -783,9 +971,9 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
                                 setSelectedModelId(model.id);
                                 setIsModelDropdownOpen(false);
                               }}
-                              className={`w-full px-3 py-2 text-left hover:bg-zinc-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-2.5 ${
+                              className={`w-full px-3 py-2 text-left hover:bg-zinc-50 dark:hover:bg-[#262626] transition-colors flex items-center gap-2.5 ${
                                 selectedModel.id === model.id
-                                  ? 'bg-zinc-50 dark:bg-slate-700'
+                                  ? 'bg-zinc-50 dark:bg-[#262626]'
                                   : ''
                               }`}
                             >
@@ -797,11 +985,11 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
                                 height={18}
                                 className="rounded-sm flex-shrink-0"
                               />
-                              <span className="font-medium text-sm text-zinc-900 dark:text-slate-100">
+                              <span className="font-medium text-sm text-zinc-900 dark:text-zinc-100">
                                 {model.name}
                               </span>
                               {selectedModel.id === model.id && (
-                                <span className="ml-auto text-emerald-500">✓</span>
+                                <span className="ml-auto text-zinc-900 dark:text-white">✓</span>
                               )}
                             </button>
                           ))}

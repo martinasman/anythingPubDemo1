@@ -19,9 +19,12 @@ import type {
   NavigationData,
   GlobalElements,
   NavItem,
+  PageSection,
+  SectionType,
 } from './types';
 import { DEFAULT_CRAWL_CONFIG } from './types';
 import { extractForms } from './formExtractor';
+import { captureScreenshot } from '../screenshot';
 
 // ============================================
 // MAIN CRAWL FUNCTION
@@ -159,6 +162,35 @@ export async function crawlSite(
   const globalElements = extractGlobalElements(pages);
   const stats = computeStats(pages);
 
+  // Capture screenshot of homepage for visual analysis
+  await emitProgress({
+    phase: 'aggregating',
+    message: 'Capturing screenshot for visual analysis...',
+  });
+
+  let screenshot: CrawledSiteData['screenshot'] | undefined;
+  try {
+    const screenshotResult = await captureScreenshot(normalizedUrl, {
+      width: 1440,
+      height: 900,
+      fullPage: false,
+      delay: 2000,
+    });
+
+    if (screenshotResult.success && screenshotResult.base64) {
+      screenshot = {
+        base64: screenshotResult.base64,
+        format: screenshotResult.format || 'png',
+        width: screenshotResult.width || 1440,
+        height: screenshotResult.height || 900,
+      };
+      console.log('[Crawler] Screenshot captured successfully');
+    }
+  } catch (error) {
+    console.log('[Crawler] Screenshot capture failed:', error);
+    // Continue without screenshot - not critical
+  }
+
   await emitProgress({
     phase: 'complete',
     message: `Crawl complete! Found ${pages.length} pages.`,
@@ -179,6 +211,7 @@ export async function crawlSite(
     brand,
     navigation,
     globalElements,
+    screenshot,
     stats,
   };
 }
@@ -247,13 +280,16 @@ export function extractPageData(
   const urlObj = new URL(url);
   const path = urlObj.pathname || '/';
 
+  const images = extractImages(document, baseUrl);
+
   return {
     url,
     path,
     title: extractTitle(document),
     meta: extractMeta(document),
     content: extractContent(document),
-    images: extractImages(document, baseUrl),
+    sections: extractSections(document, images),
+    images,
     forms: extractForms(document),
     links: extractLinks(document, baseUrl),
     pageType: detectPageType(path, document),
@@ -346,6 +382,422 @@ function extractContent(document: Document): PageContent {
   });
 
   return { headings, paragraphs, lists };
+}
+
+// ============================================
+// SECTION DETECTION
+// ============================================
+
+/**
+ * Extract semantic sections from the page structure
+ * This powers the structure-aware remix feature
+ */
+function extractSections(document: Document, pageImages: PageImage[]): PageSection[] {
+  const sections: PageSection[] = [];
+  let sectionOrder = 0;
+
+  // Section detection patterns (CSS classes and IDs)
+  const sectionPatterns: Record<SectionType, string[]> = {
+    hero: ['hero', 'banner', 'jumbotron', 'masthead', 'cover', 'intro', 'splash', 'landing-hero', 'main-hero'],
+    about: ['about', 'about-us', 'who-we-are', 'our-story', 'company', 'mission', 'overview'],
+    services: ['services', 'what-we-do', 'offerings', 'our-services', 'capabilities', 'solutions'],
+    features: ['features', 'benefits', 'highlights', 'why-us', 'why-choose', 'advantages'],
+    team: ['team', 'our-team', 'staff', 'people', 'leadership', 'founders', 'experts'],
+    testimonials: ['testimonials', 'reviews', 'feedback', 'clients-say', 'customer-stories', 'success-stories'],
+    gallery: ['gallery', 'photos', 'images', 'portfolio-gallery', 'work-gallery', 'showcase'],
+    portfolio: ['portfolio', 'work', 'projects', 'case-studies', 'our-work', 'recent-projects'],
+    pricing: ['pricing', 'plans', 'packages', 'rates', 'cost', 'membership'],
+    cta: ['cta', 'call-to-action', 'get-started', 'contact-cta', 'signup', 'join-us', 'action'],
+    contact: ['contact', 'contact-us', 'get-in-touch', 'reach-us', 'find-us', 'location'],
+    faq: ['faq', 'faqs', 'questions', 'help', 'support', 'answers'],
+    stats: ['stats', 'statistics', 'numbers', 'metrics', 'achievements', 'counters', 'by-the-numbers'],
+    clients: ['clients', 'partners', 'logos', 'trusted-by', 'brands', 'companies', 'customers'],
+    footer: ['footer', 'site-footer', 'page-footer'],
+    other: [],
+  };
+
+  // Content pattern detection (text content that suggests section type)
+  const contentPatterns: Record<SectionType, RegExp[]> = {
+    hero: [/^(welcome|discover|your|the future|transform)/i, /get started/i, /learn more/i],
+    about: [/about us/i, /who we are/i, /our story/i, /our mission/i, /since \d{4}/i, /founded in/i],
+    services: [/our services/i, /what we (do|offer)/i, /we (provide|deliver|specialize)/i],
+    features: [/features/i, /why choose us/i, /benefits/i, /what makes us/i],
+    team: [/meet (the|our) team/i, /our (team|people|experts)/i, /leadership/i],
+    testimonials: [/what (our )?(clients|customers) say/i, /testimonials/i, /reviews/i, /success stor/i],
+    gallery: [/gallery/i, /our (photos|images)/i, /see our work/i],
+    portfolio: [/our (work|projects|portfolio)/i, /case studies/i, /recent (work|projects)/i],
+    pricing: [/pricing/i, /plans/i, /packages/i, /get started (for|at)/i, /\$\d+/],
+    cta: [/get (started|in touch|a quote)/i, /contact us/i, /request/i, /schedule/i, /book (a|now)/i],
+    contact: [/contact (us|info)/i, /get in touch/i, /reach (us|out)/i, /find us/i, /our location/i],
+    faq: [/faq/i, /frequently asked/i, /questions/i, /need help/i],
+    stats: [/\d+\+?\s*(years|projects|clients|customers|happy|satisfied)/i, /by the numbers/i],
+    clients: [/our clients/i, /trusted by/i, /partners/i, /they trust us/i],
+    footer: [/copyright/i, /©/i, /all rights reserved/i],
+    other: [],
+  };
+
+  // First, find all explicit <section> elements
+  const sectionElements = document.querySelectorAll('section, [role="region"], article, .section');
+
+  sectionElements.forEach((el: Element) => {
+    const section = analyzeSectionElement(el, sectionPatterns, contentPatterns, pageImages, sectionOrder);
+    if (section) {
+      sections.push(section);
+      sectionOrder++;
+    }
+  });
+
+  // If no sections found via <section> tags, try to detect from common div patterns
+  if (sections.length === 0) {
+    // Look for divs with section-like class names
+    const sectionCandidates = document.querySelectorAll('[class*="section"], [class*="container"], [id*="section"]');
+    sectionCandidates.forEach((el: Element) => {
+      const section = analyzeSectionElement(el, sectionPatterns, contentPatterns, pageImages, sectionOrder);
+      if (section) {
+        sections.push(section);
+        sectionOrder++;
+      }
+    });
+  }
+
+  // If still no sections, create synthetic sections based on headings
+  if (sections.length === 0) {
+    const mainContent = document.querySelector('main') || document.body;
+    const headings = mainContent?.querySelectorAll('h1, h2');
+
+    headings?.forEach((heading: Element, index: number) => {
+      // Get the parent container or sibling content
+      const parent = heading.parentElement;
+      if (!parent) return;
+
+      const headingText = heading.textContent?.trim() || '';
+      const sectionType = detectSectionTypeFromText(headingText, contentPatterns);
+
+      // Gather content until next heading
+      const contentElements: string[] = [];
+      let sibling = heading.nextElementSibling;
+      while (sibling && !sibling.matches('h1, h2')) {
+        const text = sibling.textContent?.trim();
+        if (text && text.length > 10) {
+          contentElements.push(text);
+        }
+        sibling = sibling.nextElementSibling;
+      }
+
+      // Find images near this heading
+      const sectionImages = findImagesInElement(parent, pageImages);
+
+      // Detect CTA text
+      const ctaButton = parent.querySelector('a[class*="btn"], button, a[class*="cta"]');
+      const ctaText = ctaButton?.textContent?.trim();
+
+      sections.push({
+        type: index === 0 ? 'hero' : sectionType,
+        order: index,
+        heading: headingText || undefined,
+        subheading: contentElements[0]?.length < 150 ? contentElements[0] : undefined,
+        content: contentElements,
+        images: sectionImages,
+        ctaText,
+        identifiers: [],
+      });
+    });
+  }
+
+  // Always try to detect header/hero if first section isn't a hero
+  if (sections.length > 0 && sections[0].type !== 'hero') {
+    const header = document.querySelector('header');
+    const potentialHero = document.querySelector('[class*="hero"], [class*="banner"], [id*="hero"], .jumbotron');
+
+    if (potentialHero || header) {
+      const heroEl = potentialHero || header;
+      const heroSection = analyzeSectionElement(heroEl!, sectionPatterns, contentPatterns, pageImages, -1);
+      if (heroSection) {
+        heroSection.type = 'hero';
+        heroSection.order = 0;
+        // Shift all other section orders
+        sections.forEach(s => s.order++);
+        sections.unshift(heroSection);
+      }
+    }
+  }
+
+  // Try to detect footer
+  const footer = document.querySelector('footer');
+  if (footer && !sections.find(s => s.type === 'footer')) {
+    const footerSection = analyzeSectionElement(footer, sectionPatterns, contentPatterns, pageImages, sections.length);
+    if (footerSection) {
+      footerSection.type = 'footer';
+      sections.push(footerSection);
+    }
+  }
+
+  // CRITICAL: If still no sections, create a basic structure from ALL content
+  // This ensures we NEVER return empty sections - the remix prompt needs this data
+  if (sections.length === 0) {
+    console.log('[SiteCrawler] No sections detected via CSS/tags/headings - creating synthetic structure');
+    sections.push(...createSyntheticSections(document, pageImages, contentPatterns));
+  }
+
+  console.log(`[SiteCrawler] Extracted ${sections.length} sections:`, sections.map(s => `${s.type}(${s.order})`).join(', '));
+
+  return sections;
+}
+
+/**
+ * Create synthetic sections when normal detection fails
+ * This ensures we ALWAYS have structure data for the remix prompt
+ */
+function createSyntheticSections(
+  document: Document,
+  pageImages: PageImage[],
+  contentPatterns: Record<SectionType, RegExp[]>
+): PageSection[] {
+  const sections: PageSection[] = [];
+  let order = 0;
+
+  // Get all content from body (excluding nav/header/footer)
+  const mainContent = document.querySelector('main') || document.body;
+  const allHeadings = mainContent?.querySelectorAll('h1, h2, h3') || [];
+  const allParagraphs = mainContent?.querySelectorAll('p') || [];
+
+  // Collect all text content
+  const paragraphs: string[] = [];
+  allParagraphs.forEach((p: Element) => {
+    const text = p.textContent?.trim();
+    if (text && text.length > 20 && !p.closest('nav, header, footer')) {
+      paragraphs.push(text);
+    }
+  });
+
+  // ALWAYS create a HERO section (first section of any page)
+  const firstHeading = allHeadings[0];
+  const heroImages = pageImages.filter(img => img.isHero);
+  sections.push({
+    type: 'hero',
+    order: order++,
+    heading: firstHeading?.textContent?.trim() || document.title || 'Welcome',
+    subheading: paragraphs[0] || undefined,
+    content: paragraphs.slice(0, 2),
+    images: heroImages.length > 0 ? heroImages : pageImages.slice(0, 1),
+    ctaText: findCtaText(mainContent),
+    identifiers: ['synthetic-hero'],
+  });
+
+  // Create sections from remaining headings
+  const remainingHeadings = Array.from(allHeadings).slice(1);
+  let paragraphIndex = 2; // Start after hero used first 2
+
+  for (const heading of remainingHeadings) {
+    const headingText = heading.textContent?.trim() || '';
+    const sectionType = detectSectionTypeFromText(headingText, contentPatterns);
+
+    // Gather 2-3 paragraphs for this section
+    const sectionContent = paragraphs.slice(paragraphIndex, paragraphIndex + 3);
+    paragraphIndex += 3;
+
+    // Find images near this heading (simplified)
+    const sectionImages = findImagesNearElement(heading, pageImages);
+
+    sections.push({
+      type: sectionType,
+      order: order++,
+      heading: headingText,
+      subheading: sectionContent[0]?.length < 150 ? sectionContent[0] : undefined,
+      content: sectionContent,
+      images: sectionImages,
+      ctaText: undefined,
+      identifiers: ['synthetic-from-heading'],
+    });
+  }
+
+  // If we only have hero, add a CTA section with remaining content
+  if (sections.length === 1 && paragraphs.length > 2) {
+    sections.push({
+      type: 'cta',
+      order: order++,
+      heading: 'Get Started',
+      content: paragraphs.slice(2, 5),
+      images: [],
+      ctaText: findCtaText(mainContent) || 'Contact Us',
+      identifiers: ['synthetic-cta'],
+    });
+  }
+
+  // Always add footer section
+  const footerEl = document.querySelector('footer');
+  if (footerEl) {
+    const footerText = footerEl.textContent?.trim() || '';
+    sections.push({
+      type: 'footer',
+      order: order++,
+      heading: undefined,
+      content: footerText ? [footerText.slice(0, 500)] : [],
+      images: [],
+      identifiers: ['synthetic-footer'],
+    });
+  }
+
+  return sections;
+}
+
+/**
+ * Find CTA button text in an element
+ */
+function findCtaText(element: Element | null): string | undefined {
+  if (!element) return undefined;
+  const ctaButton = element.querySelector('a[class*="btn"], a[class*="button"], button, [class*="cta"], a[href*="contact"]');
+  return ctaButton?.textContent?.trim();
+}
+
+/**
+ * Find images near a specific element (simplified proximity search)
+ */
+function findImagesNearElement(element: Element, pageImages: PageImage[]): PageImage[] {
+  const parent = element.parentElement;
+  if (!parent) return [];
+
+  const imgElements = parent.querySelectorAll('img');
+  const foundSrcs = new Set<string>();
+
+  imgElements.forEach((img: Element) => {
+    const src = img.getAttribute('src') || img.getAttribute('data-src');
+    if (src) foundSrcs.add(src);
+  });
+
+  return pageImages.filter(img =>
+    foundSrcs.has(img.src) ||
+    [...foundSrcs].some(src => img.src.includes(src) || src.includes(img.src))
+  ).slice(0, 2); // Max 2 images per section
+}
+
+/**
+ * Analyze a DOM element to extract section data
+ */
+function analyzeSectionElement(
+  el: Element,
+  sectionPatterns: Record<SectionType, string[]>,
+  contentPatterns: Record<SectionType, RegExp[]>,
+  pageImages: PageImage[],
+  order: number
+): PageSection | null {
+  const className = (el.getAttribute('class') || '').toLowerCase();
+  const id = (el.getAttribute('id') || '').toLowerCase();
+  const identifiers: string[] = [];
+
+  if (className) identifiers.push(className);
+  if (id) identifiers.push(id);
+
+  // Detect section type from class/id
+  let sectionType: SectionType = 'other';
+
+  for (const [type, patterns] of Object.entries(sectionPatterns)) {
+    if (type === 'other') continue;
+    for (const pattern of patterns) {
+      if (className.includes(pattern) || id.includes(pattern)) {
+        sectionType = type as SectionType;
+        break;
+      }
+    }
+    if (sectionType !== 'other') break;
+  }
+
+  // Extract heading
+  const headingEl = el.querySelector('h1, h2, h3');
+  const heading = headingEl?.textContent?.trim();
+
+  // If no type from class/id, try to detect from heading text
+  if (sectionType === 'other' && heading) {
+    sectionType = detectSectionTypeFromText(heading, contentPatterns);
+  }
+
+  // Extract subheading (often a p tag right after heading, or h2 after h1)
+  let subheading: string | undefined;
+  if (headingEl) {
+    const nextEl = headingEl.nextElementSibling;
+    if (nextEl && (nextEl.matches('p') || nextEl.matches('h2, h3'))) {
+      const text = nextEl.textContent?.trim();
+      if (text && text.length < 200) {
+        subheading = text;
+      }
+    }
+  }
+
+  // Extract content paragraphs
+  const content: string[] = [];
+  el.querySelectorAll('p, li').forEach((p: Element) => {
+    const text = p.textContent?.trim();
+    if (text && text.length > 20 && !p.closest('nav, footer')) {
+      content.push(text);
+    }
+  });
+
+  // Skip if no meaningful content
+  if (!heading && content.length === 0) {
+    return null;
+  }
+
+  // Find images in this section
+  const sectionImages = findImagesInElement(el, pageImages);
+
+  // Detect CTA button
+  const ctaButton = el.querySelector('a[class*="btn"], a[class*="button"], button, [class*="cta"]');
+  const ctaText = ctaButton?.textContent?.trim();
+
+  return {
+    type: sectionType,
+    order,
+    heading,
+    subheading,
+    content: content.slice(0, 10), // Limit to avoid huge sections
+    images: sectionImages,
+    ctaText,
+    identifiers,
+  };
+}
+
+/**
+ * Detect section type from text content
+ */
+function detectSectionTypeFromText(text: string, contentPatterns: Record<SectionType, RegExp[]>): SectionType {
+  const lowerText = text.toLowerCase();
+
+  for (const [type, patterns] of Object.entries(contentPatterns)) {
+    if (type === 'other') continue;
+    for (const pattern of patterns) {
+      if (pattern.test(lowerText)) {
+        return type as SectionType;
+      }
+    }
+  }
+
+  return 'other';
+}
+
+/**
+ * Find images that belong to a specific element
+ */
+function findImagesInElement(el: Element, pageImages: PageImage[]): PageImage[] {
+  const imgElements = el.querySelectorAll('img');
+  const foundSrcs = new Set<string>();
+
+  imgElements.forEach((img: Element) => {
+    const src = img.getAttribute('src') || img.getAttribute('data-src');
+    if (src) foundSrcs.add(src);
+  });
+
+  // Also check for background images
+  const bgStyle = el.getAttribute('style') || '';
+  const bgMatch = bgStyle.match(/url\(['"]?([^'"]+)['"]?\)/);
+  if (bgMatch) {
+    foundSrcs.add(bgMatch[1]);
+  }
+
+  // Match against page images
+  return pageImages.filter(img =>
+    foundSrcs.has(img.src) ||
+    [...foundSrcs].some(src => img.src.includes(src) || src.includes(img.src))
+  );
 }
 
 function extractImages(document: Document, baseUrl: string): PageImage[] {

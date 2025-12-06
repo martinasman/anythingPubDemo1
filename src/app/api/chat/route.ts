@@ -14,6 +14,7 @@ import { generateAds, adsSchema } from '../tools/tool-ads';
 import { editWebsiteFiles, editWebsiteSchema } from '../tools/tool-edit-website';
 import { editBrandIdentity, editIdentitySchema } from '../tools/tool-edit-identity';
 import { editPricing, editPricingSchema } from '../tools/tool-edit-pricing';
+import { addWebsitePage, addPageSchema } from '../tools/tool-add-page';
 // CRM tool
 import { manageCRM, crmSchema } from '../tools/tool-crm';
 // Remix tool for website modernization
@@ -37,6 +38,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   edit_website: 'Updating website',
   edit_identity: 'Updating brand',
   edit_pricing: 'Updating pricing',
+  add_page: 'Adding new page',
   manage_crm: 'Managing clients',
   remix_website: 'Remixing website',
 };
@@ -47,11 +49,13 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
 
 export async function POST(req: Request) {
   try {
-    const { messages, projectId, modelId, assistantMessageId } = await req.json();
+    const { messages, projectId, modelId, assistantMessageId, chatMode = 'edit' } = await req.json();
 
     if (!projectId) {
       return new Response('Project ID is required', { status: 400 });
     }
+
+    console.log('[Chat API] Chat mode:', chatMode);
 
     // Initialize Supabase client
     const supabase = await createClient();
@@ -84,10 +88,22 @@ export async function POST(req: Request) {
       if (userMsgError) console.error('[DB] User message save failed:', userMsgError);
     }
 
-    // Always use orchestrator (no phase system)
-    const SYSTEM_PROMPT = ORCHESTRATOR_SYSTEM_PROMPT;
+    // Build system prompt based on chat mode
+    const CHAT_MODE_INSTRUCTIONS: Record<string, string> = {
+      edit: `You are in EDIT mode. Focus on making changes to the user's website, brand, or business.
+Use tools to implement changes when the user requests them. Be action-oriented.`,
+      chat: `You are in CHAT mode. Have a helpful conversation without making changes.
+Do NOT use any tools unless explicitly asked. Answer questions, provide advice, and discuss ideas.
+If the user wants to make changes, suggest they switch to Edit mode.`,
+      plan: `You are in PLAN mode. Help the user strategize and plan before building.
+Discuss ideas, create plans, outline features, but do NOT make any changes yet.
+When the user is ready to implement, suggest they switch to Edit mode.`,
+    };
 
-    console.log('[Chat API] System prompt loaded');
+    const modeInstruction = CHAT_MODE_INSTRUCTIONS[chatMode] || CHAT_MODE_INSTRUCTIONS.edit;
+    const SYSTEM_PROMPT = `${ORCHESTRATOR_SYSTEM_PROMPT}\n\n## CURRENT MODE\n${modeInstruction}`;
+
+    console.log('[Chat API] System prompt loaded with mode:', chatMode);
 
     // ============================================
     // APP MODE DETECTION (HTML vs Full-Stack)
@@ -290,6 +306,24 @@ export async function POST(req: Request) {
           });
         },
       }),
+      // Add new page to website
+      add_page: tool({
+        description:
+          'Add a new page to an existing website. Creates a new HTML page with matching styles and navigation. Use when user asks to add an about page, contact page, services page, etc.',
+        inputSchema: addPageSchema,
+        execute: async (params) => {
+          return await addWebsitePage({
+            ...params,
+            projectId,
+            onProgress: async (update) => {
+              if (update.type === 'stage') {
+                const marker = `[PROGRESS:${update.stage}:${update.message}]\n`;
+                await writeProgress(marker);
+              }
+            }
+          });
+        },
+      }),
       manage_crm: tool({
         description:
           'Manage client relationships: convert leads to clients, add new clients, update client information, add notes and activities, and track client status changes',
@@ -311,6 +345,9 @@ export async function POST(req: Request) {
               // Emit progress markers for the UI
               if (update.phase === 'crawling' && update.step === 'page') {
                 await writeProgress(`[REMIX_CRAWL:${update.detail}:${update.message}]\n`);
+              } else if (update.phase === 'generating' && update.step.startsWith('file_')) {
+                // Per-file progress - emit as standard PROGRESS marker for WorkSection stages
+                await writeProgress(`[PROGRESS:${update.step}:${update.message}]\n`);
               } else if (update.phase === 'generating' && update.step === 'page') {
                 await writeProgress(`[REMIX_GENERATE:${update.detail}:${update.message}]\n`);
               } else if (update.phase === 'complete') {

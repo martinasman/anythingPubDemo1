@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useProjectStore } from '@/store/projectStore';
-import { Users, Target, Mail, Phone, Linkedin, GripVertical, ExternalLink, AlertTriangle, Globe, X, MapPin, Building2, Loader2, ArrowRight } from 'lucide-react';
+import { Mail, Phone, Linkedin, GripVertical, ExternalLink, AlertTriangle, Globe, X, MapPin, Search, Loader2, ArrowRight } from 'lucide-react';
 import type { Lead } from '@/types/database';
 import EmailModal from './EmailModal';
 import CallScriptModal from './CallScriptModal';
@@ -15,21 +15,6 @@ const COLUMNS: { id: Lead['status']; label: string; color: string }[] = [
   { id: 'responded', label: 'Responded', color: 'bg-green-500' },
 ];
 
-// Industry options for the modal
-const INDUSTRY_OPTIONS = [
-  'Restaurants',
-  'Hair Salons & Barbershops',
-  'Gyms & Fitness',
-  'Dental Offices',
-  'Law Firms',
-  'Real Estate Agents',
-  'Auto Repair & Detailing',
-  'Cleaning Services',
-  'Contractors & Construction',
-  'Medical Clinics',
-  'Retail Stores',
-  'Spas & Beauty',
-];
 
 export default function CRMFocusView() {
   const { artifacts, runningTools, updateLeadStatus, setCanvasState } = useProjectStore();
@@ -41,8 +26,8 @@ export default function CRMFocusView() {
 
   // Lead generation modal state
   const [showLeadGenModal, setShowLeadGenModal] = useState(false);
-  const [leadGenIndustry, setLeadGenIndustry] = useState('');
   const [leadGenLocation, setLeadGenLocation] = useState('');
+  const [leadGenSearchTerms, setLeadGenSearchTerms] = useState('');
   const [leadGenCount, setLeadGenCount] = useState(20);
 
   const isLeadsLoading = runningTools.has('leads');
@@ -69,19 +54,24 @@ export default function CRMFocusView() {
 
   // Handler for submitting lead generation
   const handleSubmitLeadGen = () => {
-    if (!leadGenIndustry || !leadGenLocation) return;
+    if (!leadGenLocation) return;
+
+    // Build prompt - location is required, searchTerms is optional
+    const searchPart = leadGenSearchTerms
+      ? `searchTerms="${leadGenSearchTerms}" and `
+      : '';
 
     // Send explicit tool call request
     window.dispatchEvent(new CustomEvent('autoSubmitPrompt', {
       detail: {
-        prompt: `Use the generate_leads tool to find ${leadGenCount} leads. Search for "${leadGenIndustry}" businesses in "${leadGenLocation}". Execute the generate_leads tool now with category="${leadGenIndustry}" and location="${leadGenLocation}" and numberOfLeads=${leadGenCount}.`
+        prompt: `Use the generate_leads tool to find businesses with bad websites in "${leadGenLocation}". Execute the generate_leads tool now with ${searchPart}location="${leadGenLocation}" and numberOfLeads=${leadGenCount}.`
       }
     }));
 
     // Close modal and reset
     setShowLeadGenModal(false);
-    setLeadGenIndustry('');
     setLeadGenLocation('');
+    setLeadGenSearchTerms('');
     setLeadGenCount(20);
   };
 
@@ -130,25 +120,19 @@ export default function CRMFocusView() {
     <div className="h-full flex flex-col overflow-hidden" style={bgStyle}>
       {/* Header */}
       <div className={`px-6 py-4 border-b ${borderColor} flex items-center justify-between shrink-0 ${cardBg}`}>
-        <div className="flex items-center gap-3">
-          <div className={`w-10 h-10 rounded-xl ${isDark ? 'bg-zinc-800' : 'bg-zinc-100'} flex items-center justify-center`}>
-            <Users size={20} className={isDark ? 'text-zinc-400' : 'text-zinc-600'} />
-          </div>
-          <div>
-            <h3 className={`font-semibold ${textPrimary}`}>
-              Your Pipeline
-            </h3>
-            <p className={`text-xs ${textSecondary}`}>
-              {allLeads.length} {allLeads.length === 1 ? 'prospect' : 'prospects'} · Drag to move
-            </p>
-          </div>
+        <div>
+          <h3 className={`font-semibold ${textPrimary}`}>
+            Your Pipeline
+          </h3>
+          <p className={`text-xs ${textSecondary}`}>
+            {allLeads.length} {allLeads.length === 1 ? 'prospect' : 'prospects'} · Drag to move
+          </p>
         </div>
         <button
           onClick={handleGenerateLeads}
           disabled={isLeadsLoading}
           className={`flex items-center gap-2 px-4 py-2 text-sm font-medium ${isDark ? 'bg-white hover:bg-zinc-100 text-zinc-900' : 'bg-zinc-900 hover:bg-zinc-800 text-white'} rounded-lg transition-colors disabled:opacity-50`}
         >
-          <Target size={16} />
           {isLeadsLoading ? 'Generating...' : 'Generate Leads'}
         </button>
       </div>
@@ -221,8 +205,8 @@ export default function CRMFocusView() {
                           onClick={handleGenerateLeads}
                           className={`flex flex-col items-center gap-2 w-full py-4 rounded-lg border-2 border-dashed ${isDark ? 'border-zinc-700 hover:border-zinc-600' : 'border-zinc-300 hover:border-zinc-400'} transition-colors`}
                         >
-                          <Target size={20} className={isDark ? 'text-zinc-500' : 'text-zinc-400'} />
-                          <span>Generate leads</span>
+                          <Search size={20} className={isDark ? 'text-zinc-500' : 'text-zinc-400'} />
+                          <span>Find businesses with bad websites</span>
                         </button>
                       ) : (
                         'Drop leads here'
@@ -275,30 +259,16 @@ export default function CRMFocusView() {
               </button>
             </div>
 
-            <div className="space-y-4">
-              {/* Industry Select */}
-              <div>
-                <label className={`block text-sm font-medium ${textSecondary} mb-2`}>
-                  <Building2 size={14} className="inline mr-2" />
-                  Industry
-                </label>
-                <select
-                  value={leadGenIndustry}
-                  onChange={(e) => setLeadGenIndustry(e.target.value)}
-                  className={`w-full px-4 py-3 rounded-xl border ${isDark ? 'bg-zinc-800 border-zinc-700 text-white' : 'bg-white border-zinc-300 text-zinc-900'} focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                >
-                  <option value="">Select an industry...</option>
-                  {INDUSTRY_OPTIONS.map(industry => (
-                    <option key={industry} value={industry}>{industry}</option>
-                  ))}
-                </select>
-              </div>
+            <p className={`text-sm ${textSecondary} mb-4`}>
+              Find businesses that need website help in your target area.
+            </p>
 
+            <div className="space-y-4">
               {/* Location Input */}
               <div>
                 <label className={`block text-sm font-medium ${textSecondary} mb-2`}>
                   <MapPin size={14} className="inline mr-2" />
-                  Location
+                  Location *
                 </label>
                 <input
                   type="text"
@@ -307,6 +277,24 @@ export default function CRMFocusView() {
                   placeholder="e.g., Austin, TX or Miami, FL"
                   className={`w-full px-4 py-3 rounded-xl border ${isDark ? 'bg-zinc-800 border-zinc-700 text-white placeholder-zinc-500' : 'bg-white border-zinc-300 text-zinc-900 placeholder-zinc-400'} focus:outline-none focus:ring-2 focus:ring-blue-500`}
                 />
+              </div>
+
+              {/* Search Terms (Optional) */}
+              <div>
+                <label className={`block text-sm font-medium ${textSecondary} mb-2`}>
+                  <Search size={14} className="inline mr-2" />
+                  Search Terms (optional)
+                </label>
+                <input
+                  type="text"
+                  value={leadGenSearchTerms}
+                  onChange={(e) => setLeadGenSearchTerms(e.target.value)}
+                  placeholder="e.g., restaurants, contractors, retail"
+                  className={`w-full px-4 py-3 rounded-xl border ${isDark ? 'bg-zinc-800 border-zinc-700 text-white placeholder-zinc-500' : 'bg-white border-zinc-300 text-zinc-900 placeholder-zinc-400'} focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                />
+                <p className={`text-xs ${textSecondary} mt-1`}>
+                  Leave empty to search all small businesses
+                </p>
               </div>
 
               {/* Count Slider */}
@@ -333,14 +321,14 @@ export default function CRMFocusView() {
             {/* Submit Button */}
             <button
               onClick={handleSubmitLeadGen}
-              disabled={!leadGenIndustry || !leadGenLocation}
+              disabled={!leadGenLocation}
               className={`w-full mt-6 py-2 px-3 text-sm rounded-xl font-medium transition-colors ${
-                leadGenIndustry && leadGenLocation
+                leadGenLocation
                   ? isDark ? 'bg-white text-zinc-900 hover:bg-zinc-100' : 'bg-zinc-900 text-white hover:bg-zinc-800'
                   : isDark ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
               }`}
             >
-              Generate {leadGenCount} Leads
+              Find {leadGenCount} Businesses
             </button>
           </div>
         </div>

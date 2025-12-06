@@ -61,6 +61,44 @@ export interface PageContent {
   lists: PageList[];
 }
 
+// Section types for structure-aware remix
+export type SectionType =
+  | 'hero'
+  | 'about'
+  | 'services'
+  | 'features'
+  | 'team'
+  | 'testimonials'
+  | 'gallery'
+  | 'portfolio'
+  | 'pricing'
+  | 'cta'
+  | 'contact'
+  | 'faq'
+  | 'stats'
+  | 'clients'
+  | 'footer'
+  | 'other';
+
+export interface PageSection {
+  /** Type of section detected */
+  type: SectionType;
+  /** Order in the page (0 = first) */
+  order: number;
+  /** Section heading if present */
+  heading?: string;
+  /** Subheading if present */
+  subheading?: string;
+  /** Text content in this section */
+  content: string[];
+  /** Images in this section */
+  images: PageImage[];
+  /** Any CTA button text found */
+  ctaText?: string;
+  /** CSS classes/IDs that helped identify this section */
+  identifiers: string[];
+}
+
 export interface PageImage {
   src: string;
   alt?: string;
@@ -108,6 +146,8 @@ export interface CrawledPage {
   meta: PageMeta;
   /** Extracted text content */
   content: PageContent;
+  /** Detected sections with structure */
+  sections: PageSection[];
   /** Images found on page */
   images: PageImage[];
   /** Forms found on page */
@@ -214,6 +254,16 @@ export interface CrawledSiteData {
   navigation: NavigationData;
   /** Global elements (footer, social, etc.) */
   globalElements: GlobalElements;
+  /** Homepage screenshot for visual analysis */
+  screenshot?: {
+    /** Base64-encoded image */
+    base64: string;
+    /** Image format */
+    format: 'png' | 'jpeg';
+    /** Screenshot dimensions */
+    width: number;
+    height: number;
+  };
   /** Site statistics */
   stats: {
     totalPages: number;

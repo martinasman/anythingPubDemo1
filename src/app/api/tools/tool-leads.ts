@@ -9,18 +9,16 @@ import { analyzeWebsite, getWebsitePriority } from '@/lib/services/websiteAnalyz
 // ============================================
 
 export const leadsSchema = z.object({
-  category: z.string().describe('Business category to search (e.g., "restaurants", "gyms", "dentists")'),
-  location: z.string().describe('Location to search (e.g., "Austin, TX", "Miami, FL")'),
+  location: z.string().describe('Location to search for businesses (e.g., "Austin, TX", "Miami, FL")'),
+  searchTerms: z.string().optional().describe('Optional keywords to narrow search (e.g., "restaurants", "contractors")'),
   numberOfLeads: z.number().min(5).max(50).optional().describe('Number of leads to generate (default: 20)'),
-  analyzeWebsites: z.boolean().optional().describe('Whether to analyze website quality (default: true)'),
 });
 
 // ============================================
-// ICP TYPES
+// ICP TYPES - Website Quality Focused
 // ============================================
 
 interface ICP {
-  targetIndustries: string[];
   targetLocation: string;
   painPoints: string[];
   solutionType: string;
@@ -113,22 +111,18 @@ function calculateLeadScore(
     }
   }
 
-  // 3. ICP MATCH (0-20 points)
-  // Industry match
-  const businessType = (business.type || business.name).toLowerCase();
-  const industryMatch = icp.targetIndustries.some(ind =>
-    businessType.includes(ind.toLowerCase())
-  );
-  if (industryMatch) {
-    factors.icpMatch += 12;
-    breakdown.push('Industry match (+12)');
-  }
-
-  // Location match
+  // 3. ICP MATCH (0-20 points) - Now purely location-based
+  // Location match (the main ICP factor now)
   const locationMatch = business.address?.toLowerCase().includes(icp.targetLocation.toLowerCase().split(',')[0]);
   if (locationMatch) {
-    factors.icpMatch += 8;
-    breakdown.push('Location match (+8)');
+    factors.icpMatch += 15;
+    breakdown.push('Location match (+15)');
+  }
+
+  // Bonus for having a business type identified
+  if (business.type) {
+    factors.icpMatch += 5;
+    breakdown.push('Business type identified (+5)');
   }
 
   // 4. CONTACT AVAILABILITY (0-15 points)
@@ -218,7 +212,7 @@ async function enrichLeadWithAnalysis(
   const lead: Lead = {
     id: crypto.randomUUID(),
     companyName: business.name,
-    industry: business.type || icp.targetIndustries[0] || 'Business',
+    industry: business.type || 'Local Business',
 
     // Contact info
     website: business.website,
@@ -335,53 +329,61 @@ export async function generateLeads(params: z.infer<typeof leadsSchema> & { proj
   console.log('[Leads] ===== FUNCTION CALLED =====');
   console.log('[Leads] Params:', JSON.stringify(params, null, 2));
   console.log('[Leads] SERPAPI_KEY exists:', !!process.env.SERPAPI_KEY);
-  console.log('[Leads] SERPAPI_KEY value (first 10 chars):', process.env.SERPAPI_KEY?.substring(0, 10));
 
   // Apply defaults for optional params
   const {
-    category,
     location,
+    searchTerms,
     numberOfLeads = 20,
-    analyzeWebsites = true,
     projectId
   } = params;
 
   try {
-    console.log(`[Leads] Searching for ${category} in ${location}...`);
+    // Build search query - broad location-based search
+    const searchQuery = searchTerms
+      ? `${searchTerms} near ${location}`
+      : `small business near ${location}`;
 
-    // 1. Build ICP
+    console.log(`[Leads] Searching: "${searchQuery}"...`);
+
+    // 1. Build ICP (website-quality focused)
     const icp: ICP = {
-      targetIndustries: [category],
       targetLocation: location,
-      painPoints: ['Needs website improvement', 'Missing online presence'],
+      painPoints: [
+        'No website',
+        'Broken/error website',
+        'Poor quality website',
+        'Outdated website',
+        'Not mobile responsive'
+      ],
       solutionType: 'web design',
     };
 
-    // 2. Search Google Maps via SerpAPI (with Tavily fallback)
+    // 2. Search Google Maps via SerpAPI
     const businesses = await searchGoogleMapsBusinesses(
-      `${category} near ${location}`,
+      searchQuery,
       location,
-      { limit: numberOfLeads * 2 } // Get extra to filter
+      { limit: numberOfLeads * 2 } // Get extra to filter by quality
     );
 
     if (businesses.length === 0) {
       return {
         success: false,
-        error: 'No businesses found for the given category and location.',
+        error: 'No businesses found in this location. Try a different area.',
       };
     }
 
-    console.log(`[Leads] Found ${businesses.length} businesses, enriching...`);
+    console.log(`[Leads] Found ${businesses.length} businesses, analyzing websites...`);
 
     // 3. Enrich leads with website analysis and scoring
-    // Process in batches to avoid overwhelming
+    // Always analyze websites - that's the whole point now
     const enrichedLeads: Lead[] = [];
     const batchSize = 5;
 
     for (let i = 0; i < Math.min(businesses.length, numberOfLeads); i += batchSize) {
       const batch = businesses.slice(i, i + batchSize);
       const batchResults = await Promise.all(
-        batch.map(biz => enrichLeadWithAnalysis(biz, icp, analyzeWebsites))
+        batch.map(biz => enrichLeadWithAnalysis(biz, icp, true)) // Always analyze
       );
       enrichedLeads.push(...batchResults);
     }
@@ -435,28 +437,29 @@ export async function generateLeads(params: z.infer<typeof leadsSchema> & { proj
     }
 
     // 6. Also save to artifacts for backwards compatibility
+    const highPriorityCount = sortedLeads.filter(l => l.score >= 70).length;
     const leadsArtifact: LeadsArtifact = {
       leads: sortedLeads,
       idealCustomerProfile: {
-        industries: icp.targetIndustries,
+        industries: [...new Set(sortedLeads.map(l => l.industry))].slice(0, 5), // Top industries found
         companySize: 'small-medium',
         painPoints: icp.painPoints,
         budget: 'Varies',
       },
-      searchCriteria: `${category} in ${location}`,
+      searchCriteria: searchTerms ? `${searchTerms} in ${location}` : `Businesses in ${location}`,
       searchSummary: {
         totalFound: businesses.length,
         qualified: sortedLeads.filter(l => l.score >= 50).length,
         returned: sortedLeads.length,
-        topIndustries: [...new Set(sortedLeads.map(l => l.industry))].slice(0, 3),
+        topIndustries: [...new Set(sortedLeads.map(l => l.industry))].slice(0, 5),
         avgScore: sortedLeads.length > 0
           ? parseFloat((sortedLeads.reduce((sum, l) => sum + l.score, 0) / sortedLeads.length).toFixed(1))
           : 0,
       },
       icpInsights: {
-        strongestVertical: category,
-        commonPainPoint: sortedLeads[0]?.painPoints[0] || 'Needs online presence',
-        recommendedFocus: `Focus on ${sortedLeads.filter(l => l.score >= 70).length} high-priority leads first`,
+        strongestVertical: [...new Set(sortedLeads.map(l => l.industry))][0] || 'Various',
+        commonPainPoint: sortedLeads[0]?.painPoints[0] || 'Needs better online presence',
+        recommendedFocus: `${highPriorityCount} businesses need immediate website help`,
       },
     };
 
@@ -481,19 +484,20 @@ export async function generateLeads(params: z.infer<typeof leadsSchema> & { proj
     // 7. Format output for chat
     const chatOutput = formatLeadsForChat(sortedLeads);
 
-    // 8. Generate summary
-    const highPriority = sortedLeads.filter(l =>
-      l.websiteAnalysis?.status === 'none' ||
+    // 8. Generate summary - website quality focused
+    const noWebsite = sortedLeads.filter(l => l.websiteAnalysis?.status === 'none').length;
+    const brokenOrPoor = sortedLeads.filter(l =>
       l.websiteAnalysis?.status === 'broken' ||
       l.websiteAnalysis?.status === 'poor'
     ).length;
+    const outdated = sortedLeads.filter(l => l.websiteAnalysis?.status === 'outdated').length;
     const avgScore = leadsArtifact.searchSummary?.avgScore || 0;
 
     return {
       success: true,
       leads: sortedLeads,
       chatOutput,
-      summary: `🎯 Found ${sortedLeads.length} leads in ${location}. **${highPriority} high-priority** (no/broken/poor website). Average opportunity score: ${avgScore}/100.`,
+      summary: `Found ${sortedLeads.length} businesses with website opportunities in ${location}. **${noWebsite} have no website**, **${brokenOrPoor} have broken/poor sites**, ${outdated} are outdated. Average opportunity score: ${avgScore}/100.`,
     };
   } catch (error) {
     console.error('[Leads] Generation error:', error);

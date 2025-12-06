@@ -54,6 +54,7 @@ interface EditResponse {
 
 export const editWebsiteSchema = z.object({
   editInstructions: z.string().describe('What changes to make to the website (e.g., "change button color to blue", "make hero section taller")'),
+  targetPage: z.string().optional().describe('Which page to edit (e.g., "/index.html", "/about/index.html"). Defaults to /index.html'),
 });
 
 // ============================================
@@ -224,11 +225,12 @@ function applyCSSEdits(css: string, edits: CSSEdit[]): { css: string; applied: C
 // ============================================
 
 export async function editWebsiteFiles(params: z.infer<typeof editWebsiteSchema> & { projectId: string; onProgress?: ProgressCallback }) {
-  const { editInstructions, projectId, onProgress } = params;
+  const { editInstructions, targetPage = '/index.html', projectId, onProgress } = params;
 
   try {
     console.log('[Edit Website] 🔧 Starting DOM-based website edit...');
     console.log('[Edit Website] Instructions:', editInstructions);
+    console.log('[Edit Website] Target page:', targetPage);
 
     // Stage 1: Fetching current files
     await onProgress?.({ type: 'stage', stage: 'fetch', message: 'Loading website...' });
@@ -251,14 +253,19 @@ export async function editWebsiteFiles(params: z.infer<typeof editWebsiteSchema>
     }
 
     const currentWebsite = artifact.data as WebsiteArtifact;
-    const htmlFile = currentWebsite.files.find(f => f.path === '/index.html');
+
+    // Find the target HTML file (default to /index.html)
+    const normalizedTarget = targetPage.startsWith('/') ? targetPage : `/${targetPage}`;
+    const htmlFile = currentWebsite.files.find(f => f.path === normalizedTarget)
+      || currentWebsite.files.find(f => f.path === '/index.html');
     const cssFile = currentWebsite.files.find(f => f.path === '/styles.css');
 
     if (!htmlFile) {
-      throw new Error('Website has no HTML file');
+      throw new Error(`Page ${normalizedTarget} not found`);
     }
 
-    console.log('[Edit Website] Files loaded, using DOM-based approach');
+    const actualTargetPage = htmlFile.path;
+    console.log('[Edit Website] Editing page:', actualTargetPage);
 
     // Stage 2: Generate changes
     await onProgress?.({ type: 'stage', stage: 'analyze', message: 'Planning changes...' });
@@ -371,13 +378,21 @@ JSON:`;
     const allChanges: CodeChange[] = [];
     const updatedFiles = [...currentWebsite.files];
 
-    // Apply HTML edits
+    // Apply HTML edits to target page
     if (htmlEdits.length > 0) {
-      const htmlIndex = updatedFiles.findIndex(f => f.path === '/index.html');
+      const htmlIndex = updatedFiles.findIndex(f => f.path === actualTargetPage);
       if (htmlIndex !== -1) {
+        const pageName = actualTargetPage.split('/').pop() || 'page';
+        // Emit progress: editing this file
+        await onProgress?.({ type: 'stage', stage: 'edit_html', message: `Editing ${pageName}...` });
+
         const { html: newHtml, applied } = applyHTMLEdits(updatedFiles[htmlIndex].content, htmlEdits);
         updatedFiles[htmlIndex].content = newHtml;
-        allChanges.push(...applied);
+        // Update file paths in applied changes to reflect actual target
+        allChanges.push(...applied.map(c => ({ ...c, file: actualTargetPage })));
+
+        // Emit progress: file edited
+        await onProgress?.({ type: 'stage', stage: 'done_html', message: `Edited ${pageName}` });
 
         for (const change of applied) {
           await onProgress?.({
@@ -395,9 +410,15 @@ JSON:`;
     if (cssEdits.length > 0 && cssFile) {
       const cssIndex = updatedFiles.findIndex(f => f.path === '/styles.css');
       if (cssIndex !== -1) {
+        // Emit progress: editing this file
+        await onProgress?.({ type: 'stage', stage: 'edit_css', message: 'Editing styles.css...' });
+
         const { css: newCss, applied } = applyCSSEdits(updatedFiles[cssIndex].content, cssEdits);
         updatedFiles[cssIndex].content = newCss;
         allChanges.push(...applied);
+
+        // Emit progress: file edited
+        await onProgress?.({ type: 'stage', stage: 'done_css', message: 'Edited styles.css' });
 
         for (const change of applied) {
           await onProgress?.({
@@ -418,10 +439,10 @@ JSON:`;
     // Stage 4: Save
     await onProgress?.({ type: 'stage', stage: 'save', message: 'Saving...' });
 
-    // 7. Save updated artifact
+    // 7. Save updated artifact (preserve existing metadata)
     const updatedWebsite: WebsiteArtifact = {
+      ...currentWebsite,
       files: updatedFiles,
-      primaryPage: '/index.html',
     };
 
     const { error: saveError } = await (supabase

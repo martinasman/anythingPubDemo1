@@ -60,7 +60,7 @@ function RunningTimeIndicator() {
     return () => clearInterval(interval);
   }, []);
 
-  if (seconds < 3) return null; // Don't show for first 3 seconds
+  if (seconds < 1) return null; // Show elapsed time after 1 second
 
   return (
     <span className="text-zinc-400 dark:text-zinc-500 text-xs font-mono">
@@ -75,30 +75,29 @@ function RunningTimeIndicator() {
 
 interface WorkSectionProps {
   items: WorkItem[];
-  isStreaming: boolean;
 }
 
-export function WorkSection({ items, isStreaming }: WorkSectionProps) {
+export function WorkSection({ items }: WorkSectionProps) {
   const [isOpen, setIsOpen] = useState(true);
 
-  // Auto-collapse when all items complete and streaming stops
+  // Auto-collapse when all items complete (don't depend on isStreaming - it has timing issues)
   useEffect(() => {
     const allComplete = items.length > 0 && items.every(i => i.status === 'complete');
-    if (allComplete && !isStreaming) {
-      // Delay collapse so user sees the final state - increased from 800ms to 2000ms
+    if (allComplete) {
+      // Delay collapse so user sees the final state
       const timer = setTimeout(() => {
         setIsOpen(false);
-      }, 2000);
+      }, 800);
       return () => clearTimeout(timer);
     }
-  }, [items, isStreaming]);
+  }, [items]);
 
-  // Keep open while streaming or any tool is running
+  // Keep open while any tool is running (don't depend on isStreaming - it stays true too long)
   useEffect(() => {
-    if (isStreaming || items.some(i => i.status === 'running')) {
+    if (items.some(i => i.status === 'running')) {
       setIsOpen(true);
     }
-  }, [isStreaming, items]);
+  }, [items]);
 
   if (items.length === 0) return null;
 

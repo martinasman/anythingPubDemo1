@@ -45,7 +45,7 @@
 .dark {
   /* Dark mode - true neutral palette matching workspace */
   --surface-0: #171717;   /* neutral-900 - main page bg */
-  --surface-1: #0A0A0A;   /* neutral-950 - panels */
+  --surface-1: #171717;   /* neutral-900 - panels (same as bg, not pitch black) */
   --surface-2: #262626;   /* neutral-800 - cards */
   --surface-3: #404040;   /* neutral-700 - elevated */
 
@@ -92,7 +92,7 @@
   --color-text-primary: var(--text-primary);
   --color-text-secondary: var(--text-secondary);
   --color-text-tertiary: var(--text-tertiary);
-  --font-sans: var(--font-dm-sans);
+  --font-sans: var(--font-geist);
   --font-serif: var(--font-playfair);
 }
 
@@ -100,7 +100,7 @@ body {
   background: var(--surface-0);
   color: var(--text-primary);
   transition: background-color 150ms ease, color 150ms ease;
-  font-family: var(--font-dm-sans);
+  font-family: var(--font-geist);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

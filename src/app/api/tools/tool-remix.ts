@@ -126,9 +126,10 @@ export async function remixWebsite(params: z.infer<typeof remixSchema> & {
       apiKey: process.env.OPENROUTER_API_KEY!,
     });
 
-    // Use Gemini 3 Pro for best generation quality
-    const selectedModel = 'google/gemini-3-pro-preview';
+    // Use Gemini 2.5 Flash for best vision + generation quality
+    const selectedModel = 'google/gemini-2.5-flash-preview-05-20';
     console.log('[Remix Tool] Using model:', selectedModel);
+    console.log('[Remix Tool] Screenshot available:', !!crawledData.screenshot);
 
     // Build explicit page generation instructions
     const pageCount = crawledData.pages.length;
@@ -136,32 +137,85 @@ export async function remixWebsite(params: z.infer<typeof remixSchema> & {
       .map(p => `- ${p.path === '/' ? '/index.html' : `${p.path}/index.html`} (from "${p.title}")`)
       .join('\n');
 
-    const { text: generatedJson } = await generateText({
-      model: openrouter(selectedModel),
-      prompt: `${REMIX_ARCHITECT_PROMPT}
+    // Build the text prompt with STRONG multi-page enforcement
+    const textPrompt = `${REMIX_ARCHITECT_PROMPT}
 
 ${siteDataPrompt}
 
 ═══════════════════════════════════════════════════════════════════
-REQUIRED OUTPUT - ${pageCount} SEPARATE HTML FILES
+⚠️ CRITICAL: MULTI-PAGE GENERATION REQUIRED ⚠️
 ═══════════════════════════════════════════════════════════════════
 
-You MUST generate these exact pages as SEPARATE HTML files:
+You MUST generate EXACTLY ${pageCount + 2} files total:
+
+HTML FILES (${pageCount} pages - GENERATE ALL OF THEM):
 ${pageList}
 
-Plus these shared files:
-- /styles.css (with CSS variables for extracted brand colors)
-- /script.js (mobile menu toggle, smooth scroll, scroll animations)
+SHARED FILES (2 files):
+- /styles.css (CSS variables: --primary: ${crawledData.brand.colors.primary || '#3B82F6'}, --secondary: ${crawledData.brand.colors.secondary || '#1F2937'})
+- /script.js (mobile menu, smooth scroll, scroll animations)
 
-TOTAL FILES EXPECTED: ${pageCount + 2}
+═══════════════════════════════════════════════════════════════════
+OUTPUT FORMAT - STRICT JSON STRUCTURE
+═══════════════════════════════════════════════════════════════════
 
-IMPORTANT:
-- Each HTML page must be COMPLETE (not a template)
-- Use the EXTRACTED brand colors (primary: ${crawledData.brand.colors.primary || 'use your best judgment'})
-- Include ALL content from the original page
-- Make sure navigation links work between pages
+{
+  "files": [
+    { "path": "/index.html", "content": "<!DOCTYPE html>...", "type": "html" },
+${crawledData.pages.filter(p => p.path !== '/').map(p => `    { "path": "${p.path}/index.html", "content": "<!DOCTYPE html>...", "type": "html" },`).join('\n')}
+    { "path": "/styles.css", "content": ":root { --primary: ...; }", "type": "css" },
+    { "path": "/script.js", "content": "// Mobile menu...", "type": "js" }
+  ]
+}
 
-Return ONLY valid JSON. No markdown code blocks. No explanation.`,
+VALIDATION CHECKLIST (YOU MUST SATISFY ALL):
+✓ Exactly ${pageCount} HTML files in output
+✓ Each HTML file has path, content, type fields
+✓ Content is COMPLETE HTML (not truncated)
+✓ Navigation links point to other generated pages
+✓ Brand colors used: primary=${crawledData.brand.colors.primary || '#3B82F6'}
+
+⚠️ FAILURE CONDITION: If you generate only 1 HTML file (index.html only), you have FAILED the task.
+⚠️ SUCCESS CONDITION: Generate ALL ${pageCount} pages listed above.
+
+Return ONLY valid JSON. No markdown. No explanation.`;
+
+    // Build message content with image if screenshot is available
+    type MessageContent = { type: 'text'; text: string } | { type: 'image'; image: string; mimeType: string };
+    const messageContent: MessageContent[] = [];
+
+    // Add screenshot as image if available
+    if (crawledData.screenshot?.base64) {
+      console.log('[Remix Tool] Including screenshot in prompt for visual analysis');
+      messageContent.push({
+        type: 'image',
+        image: crawledData.screenshot.base64,
+        mimeType: crawledData.screenshot.format === 'png' ? 'image/png' : 'image/jpeg',
+      });
+    }
+
+    // Add text prompt
+    messageContent.push({
+      type: 'text',
+      text: crawledData.screenshot?.base64
+        ? `SCREENSHOT OF ORIGINAL WEBSITE ABOVE - Use this to:
+1. Match the EXACT color scheme (extract colors from what you see)
+2. Match the EXACT layout structure (section order, spacing, proportions)
+3. Match the visual hierarchy (what's prominent, what's subtle)
+4. Match the overall design style (modern, corporate, playful, etc.)
+
+${textPrompt}`
+        : textPrompt,
+    });
+
+    const { text: generatedJson } = await generateText({
+      model: openrouter(selectedModel),
+      messages: [
+        {
+          role: 'user',
+          content: messageContent,
+        },
+      ],
       temperature: 0.7,
     });
 
@@ -177,6 +231,32 @@ Return ONLY valid JSON. No markdown code blocks. No explanation.`,
 
     if (!parsed.files || parsed.files.length === 0) {
       throw new Error('No files were generated');
+    }
+
+    // Check if we got the expected number of HTML pages
+    const htmlFilesGenerated = parsed.files.filter(f => f.type === 'html').length;
+    const expectedHtmlPages = crawledData.pages.length;
+
+    if (htmlFilesGenerated < expectedHtmlPages) {
+      console.warn(`[Remix Tool] ⚠️ Expected ${expectedHtmlPages} HTML pages but only got ${htmlFilesGenerated}`);
+      console.warn(`[Remix Tool] Missing pages may need to be added manually`);
+    } else {
+      console.log(`[Remix Tool] ✓ Generated all ${htmlFilesGenerated} HTML pages`);
+    }
+
+    // Emit progress for each file being processed
+    const totalFiles = parsed.files.length;
+    for (let i = 0; i < parsed.files.length; i++) {
+      const file = parsed.files[i];
+      const progressPercent = 85 + Math.round((i / totalFiles) * 10); // 85-95%
+
+      await emitProgress({
+        phase: 'generating',
+        step: `file_${file.path.replace(/\//g, '_')}`,
+        progress: progressPercent,
+        message: `Generated ${file.path}`,
+        detail: file.type,
+      });
     }
 
     // Post-process: ensure internal links work
@@ -290,10 +370,54 @@ Return ONLY valid JSON. No markdown code blocks. No explanation.`,
 // ============================================
 
 /**
+ * Detect industry from site data for image selection
+ */
+function detectIndustry(siteData: CrawledSiteData): string {
+  const allText = [
+    siteData.brand.companyName || '',
+    siteData.brand.tagline || '',
+    ...siteData.pages.flatMap(p => [
+      p.title,
+      ...p.content.headings.map(h => h.text),
+      ...p.content.paragraphs.slice(0, 5),
+    ]),
+  ].join(' ').toLowerCase();
+
+  // Industry detection patterns
+  const patterns: Record<string, string[]> = {
+    roofing: ['roof', 'roofing', 'shingle', 'gutter'],
+    construction: ['construction', 'build', 'remodel', 'renovation'],
+    contractor: ['contractor', 'plumb', 'electric', 'hvac', 'handyman', 'home service'],
+    restaurant: ['restaurant', 'dining', 'menu', 'cuisine', 'chef', 'food'],
+    cafe: ['cafe', 'coffee', 'bakery', 'pastry', 'espresso'],
+    gym: ['gym', 'fitness', 'crossfit', 'workout', 'training', 'muscle'],
+    dental: ['dental', 'dentist', 'teeth', 'orthodont', 'smile'],
+    medical: ['medical', 'doctor', 'clinic', 'health', 'patient', 'care'],
+    realestate: ['real estate', 'realtor', 'property', 'home', 'listing', 'buy', 'sell'],
+    salon: ['salon', 'hair', 'beauty', 'stylist', 'barber', 'cut'],
+    spa: ['spa', 'massage', 'wellness', 'relax', 'treatment'],
+    auto: ['auto', 'car', 'vehicle', 'mechanic', 'repair', 'detailing'],
+    legal: ['law', 'legal', 'attorney', 'lawyer', 'case', 'court'],
+    tech: ['tech', 'software', 'app', 'saas', 'platform', 'digital'],
+    agency: ['agency', 'marketing', 'design', 'creative', 'brand'],
+  };
+
+  for (const [industry, keywords] of Object.entries(patterns)) {
+    if (keywords.some(kw => allText.includes(kw))) {
+      return industry;
+    }
+  }
+
+  return 'default';
+}
+
+/**
  * Build a detailed prompt with all site data for the AI
+ * Now uses SECTION-BY-SECTION structure for better remix quality
  */
 function buildSiteDataPrompt(siteData: CrawledSiteData): string {
   const sections: string[] = [];
+  const detectedIndustry = detectIndustry(siteData);
 
   // Brand section
   sections.push(`
@@ -304,15 +428,20 @@ EXTRACTED BRAND DATA
 Company Name: ${siteData.brand.companyName || 'Unknown'}
 Tagline: ${siteData.brand.tagline || 'None detected'}
 Logo URL: ${siteData.brand.logo || 'Not found'}
+Detected Industry: ${detectedIndustry.toUpperCase()}
 
-Colors:
+EXTRACTED COLORS (use these for the remix):
 - Primary: ${siteData.brand.colors.primary || '#3B82F6'}
 - Secondary: ${siteData.brand.colors.secondary || '#1F2937'}
 - Accent: ${siteData.brand.colors.accent || '#10B981'}
+${siteData.brand.colors.allColors.length > 0 ? `
+All extracted colors:
+${siteData.brand.colors.allColors.slice(0, 5).map(c => `- ${c.color} (found ${c.count} times)`).join('\n')}
+` : ''}
 
 Fonts:
-- Headings: ${siteData.brand.fonts.heading || 'System default'}
-- Body: ${siteData.brand.fonts.body || 'System default'}
+- Headings: ${siteData.brand.fonts.heading || 'Use a modern font that matches the industry'}
+- Body: ${siteData.brand.fonts.body || 'Use a readable sans-serif'}
 `);
 
   // Navigation section
@@ -321,17 +450,17 @@ Fonts:
 NAVIGATION STRUCTURE
 ═══════════════════════════════════════════════════════════════════
 
-Primary Navigation:
-${siteData.navigation.primary.map(nav => `- ${nav.label}: ${nav.path}`).join('\n')}
+Primary Navigation (keep this exact order and labels):
+${siteData.navigation.primary.map(nav => `- "${nav.label}" → ${nav.path}`).join('\n')}
 
 Footer Navigation:
-${siteData.navigation.footer.map(nav => `- ${nav.label}: ${nav.path}`).join('\n')}
+${siteData.navigation.footer.map(nav => `- "${nav.label}" → ${nav.path}`).join('\n')}
 `);
 
   // Contact info section
   sections.push(`
 ═══════════════════════════════════════════════════════════════════
-CONTACT INFORMATION
+CONTACT INFORMATION (preserve exactly)
 ═══════════════════════════════════════════════════════════════════
 
 Phone: ${siteData.globalElements.contactInfo.phone || 'Not found'}
@@ -342,34 +471,80 @@ Social Links:
 ${siteData.globalElements.socialLinks.map(s => `- ${s.platform}: ${s.url}`).join('\n') || 'None found'}
 `);
 
-  // Pages section
+  // Pages section - NOW WITH SECTION-BY-SECTION DATA
   sections.push(`
 ═══════════════════════════════════════════════════════════════════
 PAGES TO GENERATE (${siteData.pages.length} total)
 ═══════════════════════════════════════════════════════════════════
+
+CRITICAL: Generate each page with the SAME section order as the original.
+Each section below shows the type and content - preserve this structure!
 `);
 
   for (const page of siteData.pages) {
     sections.push(`
---- PAGE: ${page.path} ---
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PAGE: ${page.path === '/' ? '/index.html' : `${page.path}/index.html`}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Title: ${page.title}
 Type: ${page.pageType}
+`);
 
-Content:
+    // Output section-by-section data
+    if (page.sections && page.sections.length > 0) {
+      sections.push(`
+SECTIONS IN ORDER (preserve this exact order):
+`);
+      for (const section of page.sections.sort((a, b) => a.order - b.order)) {
+        const sectionImages = section.images || [];
+        const heroImage = sectionImages.find(img => img.isHero);
+        const otherImages = sectionImages.filter(img => !img.isHero && !img.isLogo);
+
+        sections.push(`
+[SECTION ${section.order + 1}: ${section.type.toUpperCase()}]
+${section.heading ? `Heading: "${section.heading}"` : ''}
+${section.subheading ? `Subheading: "${section.subheading}"` : ''}
+${section.content.length > 0 ? `Content:
+${section.content.map(p => `  "${p}"`).join('\n')}` : ''}
+${section.ctaText ? `CTA Button: "${section.ctaText}"` : ''}
+${heroImage ? `Hero Image: ${heroImage.src} (${heroImage.alt || 'no alt'}) - KEEP or replace with industry-appropriate Unsplash` : section.type === 'hero' ? `Hero Image: NONE FOUND - USE INDUSTRY IMAGE for ${detectedIndustry}` : ''}
+${otherImages.length > 0 ? `Other Images:
+${otherImages.slice(0, 3).map(img => `  - ${img.src}${img.alt ? ` (${img.alt})` : ''}`).join('\n')}` : ''}
+`);
+      }
+    } else {
+      // Fallback to old format if no sections detected
+      sections.push(`
+CONTENT (no sections detected - use headings as section markers):
+
+Headings:
 ${page.content.headings.map(h => `${'#'.repeat(h.level)} ${h.text}`).join('\n')}
 
-${page.content.paragraphs.join('\n\n')}
+Paragraphs:
+${page.content.paragraphs.map(p => `"${p}"`).join('\n\n')}
+`);
+    }
 
-Images: ${page.images.length} (${page.images.filter(i => i.isHero).length} hero, ${page.images.filter(i => i.isLogo).length} logo)
-${page.images.slice(0, 5).map(img => `- ${img.src}${img.alt ? ` (${img.alt})` : ''}`).join('\n')}
-
-Forms: ${page.forms.length}
+    // Forms
+    if (page.forms.length > 0) {
+      sections.push(`
+FORMS (preserve all fields exactly):
 ${page.forms.map(form => `
   Form Type: ${form.formType}
-  Fields:
-  ${form.fields.map(f => `  - ${f.name} (${f.type})${f.required ? ' [required]' : ''}${f.label ? ` "${f.label}"` : ''}`).join('\n')}
-  Submit: "${form.submitText}"
+  Fields (keep these exact names for backend compatibility):
+${form.fields.map(f => `    - name="${f.name}" type="${f.type}"${f.required ? ' required' : ''}${f.label ? ` label="${f.label}"` : ''}${f.placeholder ? ` placeholder="${f.placeholder}"` : ''}`).join('\n')}
+  Submit Button: "${form.submitText}"
 `).join('\n')}
+`);
+    }
+
+    // Images summary
+    const logoImg = page.images.find(i => i.isLogo);
+    sections.push(`
+IMAGES SUMMARY:
+- Total: ${page.images.length}
+- Logo: ${logoImg ? logoImg.src : 'Not found on this page'}
+- Hero images: ${page.images.filter(i => i.isHero).length}
 `);
   }
 

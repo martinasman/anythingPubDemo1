@@ -40,10 +40,8 @@ function groupChangesByFile(changes: CodeChange[]): Record<string, CodeChange[]>
 // ============================================
 
 function getFileColor(filename: string): string {
-  if (filename.endsWith('.html')) return 'text-orange-500';
-  if (filename.endsWith('.css')) return 'text-blue-500';
-  if (filename.endsWith('.js')) return 'text-yellow-500';
-  return 'text-zinc-500';
+  // Monochrome colors for all file types
+  return 'text-zinc-500 dark:text-zinc-400';
 }
 
 // ============================================
@@ -79,14 +77,14 @@ export function CodeChangeViewer({ changes, isStreaming }: CodeChangeViewerProps
   const completedChanges = changes.filter(c => c.status === 'complete').length;
 
   return (
-    <div className="mb-4 rounded-xl bg-gradient-to-br from-purple-50 to-blue-50 dark:from-purple-900/10 dark:to-blue-900/10 overflow-hidden border border-purple-200 dark:border-purple-700/30 shadow-sm">
+    <div className="mb-4 rounded-xl bg-zinc-50 dark:bg-[#1a1a1a] overflow-hidden border border-zinc-200 dark:border-zinc-700 shadow-sm">
       {/* Header */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-purple-900 dark:text-purple-100 hover:bg-purple-100/50 dark:hover:bg-purple-800/20 transition-colors"
+        className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
       >
         <span className="flex items-center gap-2.5">
-          <FileCode className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+          <FileCode className="h-4 w-4 text-zinc-500 dark:text-zinc-400" />
           <span>
             Code Changes: {completedChanges}/{totalChanges} • {fileCount} file{fileCount > 1 ? 's' : ''}
           </span>
@@ -111,14 +109,14 @@ export function CodeChangeViewer({ changes, isStreaming }: CodeChangeViewerProps
                     key={`${change.file}-${idx}`}
                     className={`flex items-start gap-2.5 text-xs py-1.5 px-2.5 rounded-lg transition-all ${
                       change.status === 'complete'
-                        ? 'bg-green-50 dark:bg-green-900/10 border-l-2 border-green-500'
-                        : 'bg-blue-50 dark:bg-blue-900/10 border-l-2 border-blue-500 animate-pulse'
+                        ? 'bg-zinc-100 dark:bg-zinc-800 border-l-2 border-zinc-400 dark:border-zinc-500'
+                        : 'bg-zinc-100 dark:bg-zinc-800 border-l-2 border-zinc-300 dark:border-zinc-600 animate-pulse'
                     }`}
                   >
                     {change.status === 'complete' ? (
-                      <Check className="h-3 w-3 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
+                      <Check className="h-3 w-3 text-zinc-600 dark:text-zinc-300 flex-shrink-0 mt-0.5" />
                     ) : (
-                      <Loader2 className="h-3 w-3 animate-spin text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+                      <Loader2 className="h-3 w-3 animate-spin text-zinc-500 dark:text-zinc-400 flex-shrink-0 mt-0.5" />
                     )}
 
                     <div className="flex-1 min-w-0">
@@ -129,11 +127,11 @@ export function CodeChangeViewer({ changes, isStreaming }: CodeChangeViewerProps
                       {/* Show before/after if available */}
                       {change.before && change.after && (
                         <div className="mt-1 flex items-center gap-2 text-[10px] font-mono">
-                          <span className="text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-1.5 py-0.5 rounded truncate max-w-[120px]">
+                          <span className="text-zinc-500 dark:text-zinc-400 bg-zinc-200 dark:bg-zinc-700 px-1.5 py-0.5 rounded truncate max-w-[120px] line-through">
                             {change.before}
                           </span>
                           <span className="text-zinc-400">→</span>
-                          <span className="text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-1.5 py-0.5 rounded truncate max-w-[120px]">
+                          <span className="text-zinc-700 dark:text-zinc-200 bg-zinc-200 dark:bg-zinc-700 px-1.5 py-0.5 rounded truncate max-w-[120px]">
                             {change.after}
                           </span>
                         </div>
