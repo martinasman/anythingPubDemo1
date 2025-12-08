@@ -2,7 +2,22 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import React from 'react';
-import { ArrowUp, Plus, Paperclip, ChevronDown, Pencil, MessageSquare, Lightbulb, MousePointer2, X, Check } from 'lucide-react';
+import { ArrowUp, Plus, Paperclip, ChevronDown, Pencil, MessageSquare, Lightbulb, MousePointer2, X, Check, Loader2 } from 'lucide-react';
+
+// ============================================
+// IMAGE UPLOAD TYPES
+// ============================================
+
+interface PendingImage {
+  id: string;
+  file: File;
+  preview: string;      // Object URL for preview
+  uploading: boolean;
+  uploaded: boolean;
+  url?: string;         // Supabase URL after upload
+  error?: string;
+  purpose: 'reference' | 'content';  // reference = AI analyzes for styling, content = embed in website
+}
 import Image from 'next/image';
 import { useProjectStore, type WorkspaceView } from '@/store/projectStore';
 import { TOOL_DISPLAY_NAMES } from '@/store/projectStore';
@@ -178,6 +193,11 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
   const submissionLockRef = useRef(false);
   const handleSendMessageRef = useRef<((messageText?: string) => Promise<void>) | undefined>(undefined);
 
+  // Image upload state
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   // Sync selected model with project's model ID when it changes externally
   useEffect(() => {
     if (selectedModelId) {
@@ -209,6 +229,139 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
   }, [storeMessages]);
+
+  // ============================================
+  // IMAGE UPLOAD HANDLERS
+  // ============================================
+
+  // Handle file input change
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length > 0) {
+      await handleFilesSelected(files);
+    }
+    // Reset input for re-selection of same file
+    e.target.value = '';
+  };
+
+  // Process selected files
+  const handleFilesSelected = async (files: File[]) => {
+    // Limit to 5 images max
+    const maxImages = 5;
+    const availableSlots = maxImages - pendingImages.length;
+    const filesToAdd = files.slice(0, availableSlots);
+
+    if (files.length > availableSlots) {
+      console.warn(`[ChatPanel] Only ${availableSlots} more image(s) allowed`);
+    }
+
+    // Filter to only image files
+    const imageFiles = filesToAdd.filter(file => file.type.startsWith('image/'));
+
+    // Create pending image entries with previews
+    const newImages: PendingImage[] = imageFiles.map(file => ({
+      id: crypto.randomUUID(),
+      file,
+      preview: URL.createObjectURL(file),
+      uploading: true,
+      uploaded: false,
+      purpose: 'content' as const,  // Default to content (embed in website)
+    }));
+
+    setPendingImages(prev => [...prev, ...newImages]);
+
+    // Upload each image
+    for (const img of newImages) {
+      try {
+        const formData = new FormData();
+        formData.append('file', img.file);
+        formData.append('projectId', project?.id || '');
+        formData.append('purpose', img.purpose);
+
+        const response = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Upload failed');
+        }
+
+        const result = await response.json();
+
+        setPendingImages(prev => prev.map(p =>
+          p.id === img.id
+            ? { ...p, uploading: false, uploaded: true, url: result.url }
+            : p
+        ));
+      } catch (error) {
+        console.error('[ChatPanel] Upload error:', error);
+        setPendingImages(prev => prev.map(p =>
+          p.id === img.id
+            ? { ...p, uploading: false, error: error instanceof Error ? error.message : 'Upload failed' }
+            : p
+        ));
+      }
+    }
+  };
+
+  // Remove an image from pending
+  const removeImage = (id: string) => {
+    setPendingImages(prev => {
+      const img = prev.find(p => p.id === id);
+      if (img?.preview) {
+        URL.revokeObjectURL(img.preview);
+      }
+      return prev.filter(p => p.id !== id);
+    });
+  };
+
+  // Toggle image purpose between reference and content
+  const toggleImagePurpose = (id: string) => {
+    setPendingImages(prev => prev.map(p =>
+      p.id === id
+        ? { ...p, purpose: p.purpose === 'reference' ? 'content' : 'reference' }
+        : p
+    ));
+  };
+
+  // Drag & drop handlers
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const files = Array.from(e.dataTransfer.files).filter(f =>
+      f.type.startsWith('image/')
+    );
+
+    if (files.length > 0) {
+      await handleFilesSelected(files);
+    }
+  };
+
+  // Clear all pending images (called after send)
+  const clearPendingImages = () => {
+    pendingImages.forEach(img => {
+      if (img.preview) {
+        URL.revokeObjectURL(img.preview);
+      }
+    });
+    setPendingImages([]);
+  };
 
   // Handle message submission
   const handleSendMessage = useCallback(async (messageText?: string) => {
@@ -246,27 +399,62 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
     // Mark that generation has started - this shows the ghost cards
     setHasStartedGeneration(true);
 
+    // Build image references from pending images
+    const imageRefs = pendingImages
+      .filter(img => img.uploaded && img.url)
+      .map(img => ({
+        url: img.url!,
+        filename: img.file.name,
+        purpose: img.purpose,
+        mimeType: img.file.type,
+      }));
+
     // Add user message optimistically to store (show raw text to user, not the prefixed version)
     const userMessage = {
       id: crypto.randomUUID(),
       project_id: project.id,
       role: 'user' as const,
       content: rawText, // Display the raw text without selector prefix
+      metadata: imageRefs.length > 0 ? { images: imageRefs } : undefined,
       created_at: new Date().toISOString(),
     };
     addMessage(userMessage);
 
-    // Create placeholder assistant message with generic "Thinking..."
-    // (will be updated when actual tool starts with context-aware message)
+    // Clear pending images after capturing them
+    clearPendingImages();
+
+    // Create placeholder assistant message with initial analysis message
     const assistantMessageId = crypto.randomUUID();
     const assistantMessage = {
       id: assistantMessageId,
       project_id: project.id,
       role: 'assistant' as const,
-      content: '💭 Thinking...',
+      content: '🔍 Analyzing your request...',
       created_at: new Date().toISOString(),
     };
     addMessage(assistantMessage);
+
+    // Cycle through analysis messages every 3 seconds while AI thinks
+    const analysisStages = [
+      '🔍 Analyzing your request...',
+      '🧠 Understanding your needs...',
+      '⚙️ Preparing tools...',
+      '🎯 Planning approach...',
+    ];
+    let stageIndex = 0;
+    let cycleIntervalId: NodeJS.Timeout | null = null;
+    cycleIntervalId = setInterval(() => {
+      stageIndex = (stageIndex + 1) % analysisStages.length;
+      updateMessage(assistantMessageId, analysisStages[stageIndex]);
+    }, 3000);
+
+    // Helper to clear the cycling interval
+    const clearCycleInterval = () => {
+      if (cycleIntervalId) {
+        clearInterval(cycleIntervalId);
+        cycleIntervalId = null;
+      }
+    };
 
     try {
       // Create abort controller for this request
@@ -277,8 +465,8 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: [
-            ...storeMessages.map(m => ({ role: m.role, content: m.content, id: m.id })),
-            { role: 'user', content: textToSend, id: userMessage.id }
+            ...storeMessages.map(m => ({ role: m.role, content: m.content, id: m.id, metadata: m.metadata })),
+            { role: 'user', content: textToSend, id: userMessage.id, metadata: userMessage.metadata }
           ],
           projectId: project.id,
           modelId: selectedModelId,
@@ -423,11 +611,22 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
 
           const chunk = decoder.decode(value, { stream: true });
 
+          // Parse [STATUS:phase:message] markers for immediate feedback
+          const statusMatches = chunk.matchAll(/\[STATUS:([^:]+):([^\]]+)\]/g);
+          for (const match of statusMatches) {
+            const [, phase, message] = match;
+            // Status updates replace the cycling messages
+            updateMessage(assistantMessageId, `🔄 ${message}`);
+          }
+
           // Parse [WORK:tool:description] markers (tool started)
           const workMatches = chunk.matchAll(/\[WORK:(\w+):([^\]]+)\]/g);
           for (const match of workMatches) {
             const [, toolName, description] = match;
             const toolType = toolNameToType[toolName];
+
+            // Stop cycling messages when tool starts
+            clearCycleInterval();
 
             // Only show loading canvas for generation tools, NOT edit tools
             // Edit tools should update in place without the full loading screen
@@ -461,12 +660,32 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
             updateMessage(assistantMessageId, `${emoji} ${displayName}...`);
           }
 
+          // Parse [REMIX_STATUS:phase:message] markers for phase transitions
+          const remixStatusMatches = chunk.matchAll(/\[REMIX_STATUS:([^:]+):([^\]]+)\]/g);
+          for (const match of remixStatusMatches) {
+            const [, phase, message] = match;
+            const emoji = phase === 'crawling' ? '🌐' : phase === 'generating' ? '✨' : '🔄';
+            updateMessage(assistantMessageId, `${emoji} ${message}`);
+          }
+
           // Parse [REMIX_CRAWL:url:message] markers for remix crawl progress
           const remixCrawlMatches = chunk.matchAll(/\[REMIX_CRAWL:([^:]+):([^\]]+)\]/g);
           for (const match of remixCrawlMatches) {
             const [, url, message] = match;
             // Update tool stage with crawl progress
             updateToolStage('remix_website', `Crawling: ${message}`);
+            // Also update the chat message with lively crawl progress
+            updateMessage(assistantMessageId, `🔍 ${message}`);
+          }
+
+          // Parse [REMIX_ANALYZE:step:message] markers for analyzing phase
+          const remixAnalyzeMatches = chunk.matchAll(/\[REMIX_ANALYZE:([^:]+):([^\]]+)\]/g);
+          for (const match of remixAnalyzeMatches) {
+            const [, step, message] = match;
+            // Update tool stage with analyze progress
+            updateToolStage('remix_website', message);
+            // Also update the chat message with analyze progress
+            updateMessage(assistantMessageId, `🎯 ${message}`);
           }
 
           // Parse [REMIX_GENERATE:page:message] markers for remix generation progress
@@ -475,6 +694,8 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
             const [, page, message] = match;
             // Update tool stage with generation progress
             updateToolStage('remix_website', `Generating: ${message}`);
+            // Also update the chat message with generation progress
+            updateMessage(assistantMessageId, `🎨 ${message}`);
           }
 
           // Parse [REMIX_COMPLETE:summary] markers for remix completion
@@ -622,11 +843,15 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
           // Remove all markers from displayed content (including legacy markers for backwards compatibility)
           const cleanChunk = chunk
             .replace(/\[WORK:\w+:[^\]]+\]\n?/g, '')
-            .replace(/\[WORK_DONE:\w+:[^\]]+\]\n?/g, '')
+            .replace(/\[WORK_DONE:\w+:[^\]]*\]\n?/g, '')
             .replace(/\[WORK_ERROR:\w+:[^\]]+\]\n?/g, '')
             .replace(/\[CODE_CHANGE:[^\]]+\]\n?/g, '')
+            // Status markers for immediate feedback
+            .replace(/\[STATUS:[^\]]+\]\n?/g, '')
             // Remix progress markers
+            .replace(/\[REMIX_STATUS:[^\]]+\]\n?/g, '')
             .replace(/\[REMIX_CRAWL:[^\]]+\]\n?/g, '')
+            .replace(/\[REMIX_ANALYZE:[^\]]+\]\n?/g, '')
             .replace(/\[REMIX_GENERATE:[^\]]+\]\n?/g, '')
             .replace(/\[REMIX_COMPLETE:[^\]]+\]\n?/g, '')
             // Legacy marker cleanup (backwards compatibility during transition)
@@ -656,6 +881,7 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
       setIsLoading(false);
       abortControllerRef.current = null;
       submissionLockRef.current = false; // Release lock
+      clearCycleInterval(); // Ensure cycling messages stop
     }
   }, [project?.id, isLoading, input, storeMessages, selectedModelId, addMessage, updateMessage, setToolRunning, setHasStartedGeneration, setWorkspaceView, selectedElementSelector, setSelectedElementSelector, setSelectedElementInfo]);
 
@@ -717,9 +943,31 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
                 >
                   {message.role === 'user' ? (
                     /* User message - keep in bubble */
-                    <div className="max-w-[80%] rounded-2xl px-4 py-3 text-sm bg-zinc-200 dark:bg-[#262626] text-zinc-900 dark:text-zinc-100">
-                      {message.content}
-                    </div>
+                    (() => {
+                      const images = message.metadata?.images as Array<{ url: string; filename: string; purpose: string }> | undefined;
+                      return (
+                        <div className="max-w-[80%]">
+                          {/* Display uploaded images above message */}
+                          {images && images.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 mb-2 justify-end">
+                              {images.map((img, i) => (
+                                <div key={i}>
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={img.url}
+                                    alt={img.filename}
+                                    className="w-16 h-16 object-cover rounded-lg border border-zinc-300 dark:border-zinc-600"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <div className="rounded-2xl px-4 py-3 text-sm bg-zinc-200 dark:bg-[#262626] text-zinc-900 dark:text-zinc-100">
+                            {message.content}
+                          </div>
+                        </div>
+                      );
+                    })()
                   ) : (
                     /* AI message - display with icon */
                     <div className="flex gap-3 w-full max-w-full">
@@ -798,36 +1046,120 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
       {/* Bottom Input */}
       <form onSubmit={handleSubmit}>
         <div className="p-1.5">
-          <div className="relative rounded-2xl" style={{ background: 'var(--surface-2)', boxShadow: 'var(--shadow-md)' }}>
-            {/* Element Targeting Badge - show above textarea when element is selected */}
-            {selectedElementInfo && (
-              <div className="absolute top-2 left-3 right-3 flex items-center gap-2 px-3 py-2 bg-zinc-100 dark:bg-[#171717] border border-zinc-200 dark:border-zinc-700 rounded-lg z-10">
-                <MousePointer2 size={14} className="text-zinc-500 dark:text-zinc-400 flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                      Targeting:
-                    </span>
-                    <code className="text-xs font-mono text-zinc-600 dark:text-zinc-400 truncate">
-                      &lt;{selectedElementInfo.tagName}&gt;
-                    </code>
+          <div
+            className={`relative rounded-2xl transition-all ${isDragging ? 'ring-2 ring-blue-500 ring-offset-2' : ''}`}
+            style={{ background: 'var(--surface-2)', boxShadow: 'var(--shadow-md)' }}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            {/* Drag overlay */}
+            {isDragging && (
+              <div className="absolute inset-0 bg-blue-500/10 rounded-2xl flex items-center justify-center z-30 pointer-events-none">
+                <div className="text-blue-500 font-medium text-sm">Drop images here</div>
+              </div>
+            )}
+
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/gif,image/webp"
+              multiple
+              className="hidden"
+              onChange={handleFileSelect}
+            />
+
+            {/* Top content area - stacks element targeting and image previews */}
+            {(pendingImages.length > 0 || selectedElementInfo) && (
+              <div className="absolute top-2 left-3 right-3 flex flex-col gap-2 z-20">
+                {/* Element Targeting Badge - show when element is selected */}
+                {selectedElementInfo && (
+                  <div className="flex items-center gap-2 px-3 py-2 bg-zinc-100 dark:bg-[#171717] border border-zinc-200 dark:border-zinc-700 rounded-lg">
+                    <MousePointer2 size={14} className="text-zinc-500 dark:text-zinc-400 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                          Targeting:
+                        </span>
+                        <code className="text-xs font-mono text-zinc-600 dark:text-zinc-400 truncate">
+                          &lt;{selectedElementInfo.tagName}&gt;
+                        </code>
+                      </div>
+                      {selectedElementInfo.text && (
+                        <p className="text-xs text-zinc-500 dark:text-zinc-500 truncate mt-0.5">
+                          &quot;{selectedElementInfo.text}&quot;
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedElementInfo(null);
+                        setSelectedElementSelector(null);
+                      }}
+                      className="p-1 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 rounded transition-colors"
+                    >
+                      <X size={14} />
+                    </button>
                   </div>
-                  {selectedElementInfo.text && (
-                    <p className="text-xs text-zinc-500 dark:text-zinc-500 truncate mt-0.5">
-                      "{selectedElementInfo.text}"
-                    </p>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedElementInfo(null);
-                    setSelectedElementSelector(null);
-                  }}
-                  className="p-1 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 rounded transition-colors"
-                >
-                  <X size={14} />
-                </button>
+                )}
+
+                {/* Image Previews - shown when images are pending */}
+                {pendingImages.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {pendingImages.map((img) => (
+                      <div key={img.id} className="relative group">
+                        {/* Thumbnail */}
+                        <div className={`w-14 h-14 rounded-lg overflow-hidden border-2 transition-colors ${
+                          img.error ? 'border-red-500' :
+                          img.uploading ? 'border-blue-500' :
+                          img.uploaded ? 'border-green-500' :
+                          'border-zinc-300 dark:border-zinc-600'
+                        }`}>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={img.preview}
+                            alt="Upload preview"
+                            className="w-full h-full object-cover"
+                          />
+                          {/* Upload progress overlay */}
+                          {img.uploading && (
+                            <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                              <Loader2 className="w-4 h-4 text-white animate-spin" />
+                            </div>
+                          )}
+                          {/* Error overlay */}
+                          {img.error && (
+                            <div className="absolute inset-0 bg-red-500/50 flex items-center justify-center">
+                              <X className="w-4 h-4 text-white" />
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Remove button */}
+                        <button
+                          type="button"
+                          onClick={() => removeImage(img.id)}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-zinc-800 dark:bg-zinc-200 text-white dark:text-zinc-800 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-sm"
+                        >
+                          <X size={10} />
+                        </button>
+                      </div>
+                    ))}
+
+                    {/* Add more button */}
+                    {pendingImages.length < 5 && (
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="w-14 h-14 rounded-lg border-2 border-dashed border-zinc-300 dark:border-zinc-600 flex items-center justify-center text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:border-zinc-400 dark:hover:border-zinc-500 transition-colors"
+                      >
+                        <Plus size={18} />
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -841,7 +1173,9 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
                 }
               }}
               placeholder={getPlaceholder(workspaceView, currentLead?.companyName ?? null, chatMode)}
-              className={`w-full pl-4 pr-12 pb-12 text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 resize-none focus:outline-none bg-transparent rounded-2xl overflow-y-auto ${selectedElementInfo ? 'pt-16' : 'pt-3'}`}
+              className={`w-full pl-4 pr-12 pb-12 text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 resize-none focus:outline-none bg-transparent rounded-2xl overflow-y-auto ${
+                pendingImages.length > 0 && selectedElementInfo ? 'pt-32' : pendingImages.length > 0 ? 'pt-20' : selectedElementInfo ? 'pt-14' : 'pt-3'
+              }`}
               rows={1}
               style={{ minHeight: '120px', maxHeight: '300px' }}
               disabled={isLoading}
@@ -861,8 +1195,14 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
               {/* Attach File Button */}
               <button
                 type="button"
-                className="flex items-center justify-center w-7 h-7 text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-[#171717] rounded-lg transition-all"
-                aria-label="Attach file"
+                onClick={() => fileInputRef.current?.click()}
+                className={`flex items-center justify-center w-7 h-7 rounded-lg transition-all ${
+                  pendingImages.length > 0
+                    ? 'text-blue-500 bg-blue-50 dark:bg-blue-950'
+                    : 'text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-[#171717]'
+                }`}
+                aria-label="Attach images"
+                title="Upload images (drag & drop also works)"
               >
                 <Paperclip size={14} strokeWidth={1.5} />
               </button>

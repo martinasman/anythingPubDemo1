@@ -224,8 +224,19 @@ function applyCSSEdits(css: string, edits: CSSEdit[]): { css: string; applied: C
 // TOOL IMPLEMENTATION - DOM-BASED EDITING
 // ============================================
 
-export async function editWebsiteFiles(params: z.infer<typeof editWebsiteSchema> & { projectId: string; onProgress?: ProgressCallback }) {
-  const { editInstructions, targetPage = '/index.html', projectId, onProgress } = params;
+// Image context for vision-based edits
+interface ImageContext {
+  referenceImages: Array<{ url: string; filename: string; purpose: string; mimeType: string }>;
+  contentImages: Array<{ url: string; filename: string; purpose: string; mimeType: string }>;
+}
+
+export async function editWebsiteFiles(params: z.infer<typeof editWebsiteSchema> & {
+  projectId: string;
+  onProgress?: ProgressCallback;
+  imageContext?: ImageContext;
+  modelId?: string;
+}) {
+  const { editInstructions, targetPage = '/index.html', projectId, onProgress, imageContext, modelId } = params;
 
   try {
     console.log('[Edit Website] 🔧 Starting DOM-based website edit...');
@@ -275,12 +286,58 @@ export async function editWebsiteFiles(params: z.infer<typeof editWebsiteSchema>
       apiKey: process.env.OPENROUTER_API_KEY!,
     });
 
-    // Use Claude 3.5 Sonnet for reliable selector generation
-    const selectedModel = 'anthropic/claude-3.5-sonnet';
+    // Use the user's selected model, or default to Claude 3.5 Sonnet
+    const hasContentImages = imageContext?.contentImages && imageContext.contentImages.length > 0;
+    const hasReferenceImages = imageContext?.referenceImages && imageContext.referenceImages.length > 0;
+    const selectedModel = modelId || 'anthropic/claude-3.5-sonnet';
+    const modelDisplayName = selectedModel.split('/').pop() || selectedModel;
+
+    // Show model being used in chat
+    await onProgress?.({ type: 'stage', stage: 'model', message: `Using ${modelDisplayName}...` });
+
     console.log('[Edit Website] Using model:', selectedModel);
+    if (hasContentImages) console.log('[Edit Website] Content images to embed:', imageContext!.contentImages.length);
+    if (hasReferenceImages) console.log('[Edit Website] Reference images:', imageContext!.referenceImages.length);
+
+    // Build image context instructions if images provided
+    let imageInstructions = '';
+    if (imageContext?.contentImages && imageContext.contentImages.length > 0) {
+      imageInstructions += `
+
+═══════════════════════════════════════════════════════════════════
+USER UPLOADED IMAGES - YOU MUST USE THESE
+═══════════════════════════════════════════════════════════════════
+
+The user uploaded ${imageContext.contentImages.length} image(s) to add to their website.
+Use these EXACT URLs:
+
+${imageContext.contentImages.map((img, i) => `IMAGE ${i + 1}: ${img.url}`).join('\n')}
+
+HOW TO ADD IMAGES:
+
+1. As BACKGROUND IMAGE (for hero, sections, etc.):
+   {"cssEdits": [{"selector": ".hero, section:first-of-type", "property": "background-image", "value": "url('${imageContext.contentImages[0].url}')", "description": "Add background image"}]}
+   Also add: {"cssEdits": [{"selector": ".hero", "property": "background-size", "value": "cover", "description": "Cover background"}]}
+   Also add: {"cssEdits": [{"selector": ".hero", "property": "background-position", "value": "center", "description": "Center background"}]}
+
+2. As IMG TAG (for content areas):
+   {"htmlEdits": [{"selector": ".hero img, .featured img", "action": "attribute", "property": "src", "value": "${imageContext.contentImages[0].url}", "description": "Set image source"}]}
+
+IMPORTANT: The user said "${editInstructions}" - use the image URL above to fulfill this request!
+`;
+    }
+
+    if (hasReferenceImages) {
+      imageInstructions += `\n\nDESIGN REFERENCE:\nThe user has provided ${imageContext!.referenceImages.length} reference image(s) showing their desired style.
+Analyze these images and match their:
+- Color scheme (extract dominant colors)
+- Typography style
+- Spacing and layout feel
+- Overall aesthetic`;
+    }
 
     // 3. Build the DOM-BASED prompt
-    const prompt = `You are making targeted edits to a website using CSS selectors.
+    const prompt = `You are making targeted edits to a website using CSS selectors.${imageInstructions}
 
 USER REQUEST: "${editInstructions}"
 
@@ -329,12 +386,65 @@ JSON:`;
     // 4. Get AI response
     await onProgress?.({ type: 'stage', stage: 'generate', message: 'Generating changes...' });
 
-    const { text } = await generateText({
-      model: openrouter(selectedModel),
-      prompt,
-      temperature: 0.1,
-      maxOutputTokens: 1000,
-    });
+    let text: string;
+
+    try {
+      if (hasReferenceImages) {
+        // Build multimodal message with images for vision model
+        type MessageContent =
+          | { type: 'text'; text: string }
+          | { type: 'image'; image: string; mimeType: string };
+
+        const messageContent: MessageContent[] = [];
+
+        // Add reference images (fetch and convert to base64)
+        for (const img of imageContext!.referenceImages) {
+          try {
+            const response = await fetch(img.url);
+            const buffer = await response.arrayBuffer();
+            const base64 = Buffer.from(buffer).toString('base64');
+            messageContent.push({
+              type: 'image',
+              image: base64,
+              mimeType: img.mimeType || 'image/jpeg',
+            });
+          } catch (err) {
+            console.error('[Edit Website] Failed to fetch reference image:', img.url, err);
+          }
+        }
+
+        // Add text prompt
+        messageContent.push({ type: 'text', text: prompt });
+
+        const result = await generateText({
+          model: openrouter(selectedModel),
+          messages: [{ role: 'user', content: messageContent }],
+          temperature: 0.1,
+          maxOutputTokens: 1000,
+        });
+        text = result.text;
+      } else {
+        // Standard text-only call
+        const result = await generateText({
+          model: openrouter(selectedModel),
+          prompt,
+          temperature: 0.1,
+          maxOutputTokens: 1000,
+        });
+        text = result.text;
+      }
+    } catch (apiError) {
+      console.error('[Edit Website] API call failed:', apiError);
+      const errorMessage = apiError instanceof Error ? apiError.message : 'Unknown error';
+      throw new Error(`AI API error: ${errorMessage}. Try selecting a different model.`);
+    }
+
+    // Validate we got a response
+    if (!text || text.trim() === '') {
+      console.error('[Edit Website] Empty response from model:', selectedModel);
+      const modelName = selectedModel.split('/').pop() || selectedModel;
+      throw new Error(`Model "${modelName}" returned empty response. Please try again or select a different model.`);
+    }
 
     console.log('[Edit Website] AI response:', text.substring(0, 300));
 
@@ -371,6 +481,9 @@ JSON:`;
     if (htmlEdits.length === 0 && cssEdits.length === 0) {
       throw new Error('No changes detected. Try being more specific about what to change.');
     }
+
+    const totalEdits = htmlEdits.length + cssEdits.length;
+    await onProgress?.({ type: 'stage', stage: 'edits', message: `Applying ${totalEdits} change${totalEdits !== 1 ? 's' : ''}...` });
 
     console.log(`[Edit Website] Applying ${htmlEdits.length} HTML edits and ${cssEdits.length} CSS edits`);
 
@@ -445,10 +558,12 @@ JSON:`;
       files: updatedFiles,
     };
 
+    // Save previous state for undo capability
     const { error: saveError } = await (supabase
       .from('artifacts') as any)
       .update({
         data: updatedWebsite,
+        previous_data: currentWebsite, // Store previous version for undo
         version: (artifact.version || 1) + 1,
         updated_at: new Date().toISOString(),
       })

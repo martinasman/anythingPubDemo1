@@ -3,7 +3,7 @@ import { generateText } from 'ai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { createClient } from '@supabase/supabase-js';
 import type { WebsiteArtifact } from '@/types/database';
-import { getArchitectPrompt, detectIndustryKey } from '@/config/agentPrompts';
+import { getArchitectPrompt, detectIndustryKey, buildInspirationPromptSection } from '@/config/agentPrompts';
 import {
   PATTERN_REGISTRY,
   resolvePatternDependencies,
@@ -12,6 +12,7 @@ import {
 } from '@/config/codePatterns';
 import { getIndustryContext } from '@/config/industryContext';
 import { analyzeBusinessPersonality, getDesignAdaptations } from '@/lib/services/businessAnalyzer';
+import { getDesignInspiration } from '@/lib/services/designReferences';
 
 // ============================================
 // SCHEMA DEFINITION
@@ -37,6 +38,15 @@ export const codeGenSchema = z.object({
 });
 
 // ============================================
+// IMAGE CONTEXT TYPE
+// ============================================
+
+interface ImageContext {
+  referenceImages: Array<{ url: string; filename: string; purpose: string; mimeType: string }>;
+  contentImages: Array<{ url: string; filename: string; purpose: string; mimeType: string }>;
+}
+
+// ============================================
 // TOOL IMPLEMENTATION
 // ============================================
 
@@ -44,7 +54,13 @@ export const codeGenSchema = z.object({
  * Main entry point for website generation
  * Routes to HTML or Next.js generation based on mode
  */
-export async function generateWebsiteFiles(params: z.infer<typeof codeGenSchema> & { projectId: string; modelId?: string; marketResearch?: any; mode?: 'html' | 'nextjs' }) {
+export async function generateWebsiteFiles(params: z.infer<typeof codeGenSchema> & {
+  projectId: string;
+  modelId?: string;
+  marketResearch?: any;
+  mode?: 'html' | 'nextjs';
+  imageContext?: ImageContext;
+}) {
   const { mode = 'html' } = params;
 
   console.log('[Code Tool] Generating ' + mode + ' app');
@@ -59,8 +75,13 @@ export async function generateWebsiteFiles(params: z.infer<typeof codeGenSchema>
 /**
  * Generate HTML landing page (existing logic)
  */
-async function generateHTMLSite(params: z.infer<typeof codeGenSchema> & { projectId: string; modelId?: string; marketResearch?: any }) {
-  const { businessDescription, identity, projectId, modelId, marketResearch } = params;
+async function generateHTMLSite(params: z.infer<typeof codeGenSchema> & {
+  projectId: string;
+  modelId?: string;
+  marketResearch?: any;
+  imageContext?: ImageContext;
+}) {
+  const { businessDescription, identity, projectId, modelId, marketResearch, imageContext } = params;
 
   try {
     // Initialize OpenRouter client
@@ -82,8 +103,33 @@ async function generateHTMLSite(params: z.infer<typeof codeGenSchema> & { projec
     const architectPrompt = getArchitectPrompt('html', industryKey);
     console.log('[Code Tool] Using industry template:', industryKey);
 
+    // Load design inspiration from reference screenshots
+    let inspirationSection = '';
+    try {
+      const designInspiration = await getDesignInspiration();
+      if (designInspiration) {
+        // Show useful details instead of vague vibe text
+        const sectionCount = designInspiration.sectionStructure?.order?.length || 0;
+        const primaryColor = designInspiration.colorScheme?.dominantColor || 'default';
+        const accentColor = designInspiration.colorScheme?.accentColor || 'default';
+        const heroStyle = designInspiration.layout?.heroStyle || 'centered';
+
+        console.log('[Code Tool] Design inspiration loaded:', {
+          colors: [primaryColor, accentColor],
+          sections: sectionCount,
+          heroStyle: heroStyle,
+        });
+        inspirationSection = buildInspirationPromptSection(designInspiration);
+      } else {
+        console.log('[Code Tool] No design inspiration configured, using default styles');
+      }
+    } catch (error) {
+      console.warn('[Code Tool] Failed to load design inspiration:', error);
+    }
+
     // Build the prompt with world-class design standards
     const prompt = `${architectPrompt}
+${inspirationSection}
 
 ===== PROJECT BRIEF =====
 
@@ -213,6 +259,38 @@ JavaScript (script.js):
 - Form validation and submission (form handler will be injected)
 - Interactive hover effects
 - Loading animations
+${imageContext?.contentImages && imageContext.contentImages.length > 0 ? `
+
+===== USER-PROVIDED IMAGES TO EMBED =====
+
+The user has provided ${imageContext.contentImages.length} image(s) to include in the website.
+You MUST embed these images using the EXACT URLs provided:
+
+${imageContext.contentImages.map((img, i) => `${i + 1}. ${img.filename}
+   URL: ${img.url}
+   Usage: <img src="${img.url}" alt="${img.filename.replace(/\.[^.]+$/, '')}" class="..." />`).join('\n\n')}
+
+Place these images appropriately based on their filenames:
+- Hero/banner images: In the hero section as background or featured image
+- Product images: In a gallery or features section
+- Team photos: In an about or team section
+- Logo/brand images: In header/footer
+` : ''}
+${imageContext?.referenceImages && imageContext.referenceImages.length > 0 ? `
+
+===== DESIGN REFERENCE IMAGES =====
+
+The user has provided ${imageContext.referenceImages.length} reference image(s) showing their desired style.
+Analyze these references and match:
+- Color palette and gradients
+- Typography scale and weights
+- Spacing and whitespace
+- Layout patterns and section styles
+- Overall aesthetic and mood
+
+Reference URLs (for style analysis only):
+${imageContext.referenceImages.map(img => `- ${img.url}`).join('\n')}
+` : ''}
 
 Return EXACTLY 3 files in this JSON format (NO markdown, NO explanations):
 

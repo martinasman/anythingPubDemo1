@@ -153,6 +153,31 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
     const appMode = detectAppMode(userMessage?.content || '');
     console.log('[Chat API] App mode detected:', appMode);
 
+    // ============================================
+    // IMAGE CONTEXT EXTRACTION
+    // ============================================
+
+    interface ImageRef {
+      url: string;
+      filename: string;
+      purpose: 'reference' | 'content';
+      mimeType: string;
+    }
+
+    // Extract images from the latest user message metadata
+    const imageRefs = (userMessage?.metadata?.images as ImageRef[] | undefined) || [];
+    const imageContext = {
+      referenceImages: imageRefs.filter(i => i.purpose === 'reference'),
+      contentImages: imageRefs.filter(i => i.purpose === 'content'),
+    };
+
+    if (imageRefs.length > 0) {
+      console.log('[Chat API] Image context:', {
+        reference: imageContext.referenceImages.length,
+        content: imageContext.contentImages.length,
+      });
+    }
+
     // Tool definitions
     const tools = {
       perform_market_research: tool({
@@ -208,6 +233,7 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
             modelId: selectedModel,
             marketResearch,
             mode: appMode,
+            imageContext, // Pass image context for embedding/reference
           });
         },
       }),
@@ -255,9 +281,15 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
           'Edit an existing website - use this to make changes like updating colors, text, layout, or sections. DO NOT use generate_website_files for edits.',
         inputSchema: editWebsiteSchema,
         execute: async (params) => {
+          // Emit work marker BEFORE tool executes so progress stages can attach to it
+          activeTools.add('edit_website');
+          toolStartTimes['edit_website'] = Date.now();
+          await writeProgress(`[WORK:edit_website:Updating your website]\n`);
           return await editWebsiteFiles({
             ...params,
             projectId,
+            imageContext, // Pass image context for vision-based edits
+            modelId: selectedModel, // Use user's selected model
             onProgress: async (update) => {
               if (update.type === 'stage') {
                 // Emit progress stage marker
@@ -345,11 +377,18 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
               // Emit progress markers for the UI
               if (update.phase === 'crawling' && update.step === 'page') {
                 await writeProgress(`[REMIX_CRAWL:${update.detail}:${update.message}]\n`);
+              } else if (update.phase === 'crawling' && update.step === 'start') {
+                await writeProgress(`[REMIX_STATUS:crawling:${update.message}]\n`);
+              } else if (update.phase === 'analyzing') {
+                // Emit analyzing phase updates for lively UI
+                await writeProgress(`[REMIX_ANALYZE:${update.step}:${update.message}${update.detail ? ` - ${update.detail}` : ''}]\n`);
               } else if (update.phase === 'generating' && update.step.startsWith('file_')) {
                 // Per-file progress - emit as standard PROGRESS marker for WorkSection stages
                 await writeProgress(`[PROGRESS:${update.step}:${update.message}]\n`);
               } else if (update.phase === 'generating' && update.step === 'page') {
                 await writeProgress(`[REMIX_GENERATE:${update.detail}:${update.message}]\n`);
+              } else if (update.phase === 'generating' && update.step === 'start') {
+                await writeProgress(`[REMIX_STATUS:generating:${update.message}]\n`);
               } else if (update.phase === 'complete') {
                 await writeProgress(`[REMIX_COMPLETE:${update.detail}]\n`);
               }
@@ -373,6 +412,9 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
     const activeTools = new Set<string>();
     const completedTools = new Set<string>();
     const toolStartTimes: Record<string, number> = {};
+
+    // IMMEDIATELY emit status so user sees something while AI thinks
+    await writeProgress(`[STATUS:init:Analyzing your request...]\n`);
 
     // Stream AI response with tools
     const result = streamText({

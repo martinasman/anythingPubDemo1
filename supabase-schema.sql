@@ -557,10 +557,89 @@ COMMENT ON COLUMN projects.mode IS 'Business mode: agency, commerce, or playgrou
 COMMENT ON COLUMN projects.mode_data IS 'Mode-specific configuration data (agency type, commerce entry point, etc.)';
 
 -- ============================================
+-- PUBLISHED WEBSITES TABLE
+-- ============================================
+-- Stores deployed websites to Vercel with custom domain support
+CREATE TABLE IF NOT EXISTS published_websites (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+
+  -- Deployment Info
+  deployment_id TEXT,                    -- Vercel deployment ID
+  deployment_url TEXT NOT NULL,          -- Current live URL
+  subdomain TEXT NOT NULL,               -- e.g., 'my-project'
+  base_domain TEXT DEFAULT 'anything.app', -- e.g., 'anything.app'
+  custom_domain TEXT,                    -- e.g., 'mycompany.com'
+
+  -- Website Source
+  source_type TEXT NOT NULL CHECK (source_type IN ('project', 'lead')),
+  source_artifact_id UUID,               -- Reference to artifacts table
+  lead_id UUID REFERENCES leads(id) ON DELETE SET NULL,
+
+  -- Access Control
+  access_level TEXT DEFAULT 'public' CHECK (access_level IN ('public', 'password', 'private')),
+  password_hash TEXT,                    -- If password protected
+
+  -- Status
+  status TEXT DEFAULT 'deploying' CHECK (status IN ('deploying', 'published', 'failed', 'archived')),
+  last_deployed_at TIMESTAMPTZ,
+
+  -- Analytics
+  view_count INTEGER DEFAULT 0,
+
+  -- Timestamps
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+
+  CONSTRAINT unique_subdomain UNIQUE(subdomain, base_domain)
+);
+
+-- Performance Indexes
+CREATE INDEX IF NOT EXISTS idx_published_websites_project ON published_websites(project_id);
+CREATE INDEX IF NOT EXISTS idx_published_websites_subdomain ON published_websites(subdomain);
+CREATE INDEX IF NOT EXISTS idx_published_websites_custom_domain ON published_websites(custom_domain) WHERE custom_domain IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_published_websites_lead ON published_websites(lead_id) WHERE lead_id IS NOT NULL;
+
+-- Trigger for published_websites table
+DROP TRIGGER IF EXISTS update_published_websites_updated_at ON published_websites;
+CREATE TRIGGER update_published_websites_updated_at
+  BEFORE UPDATE ON published_websites
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- Enable RLS on published_websites table
+ALTER TABLE published_websites ENABLE ROW LEVEL SECURITY;
+
+-- Published websites policies
+DROP POLICY IF EXISTS "Allow public read access to published_websites" ON published_websites;
+CREATE POLICY "Allow public read access to published_websites"
+  ON published_websites FOR SELECT
+  USING (true);
+
+DROP POLICY IF EXISTS "Allow public insert access to published_websites" ON published_websites;
+CREATE POLICY "Allow public insert access to published_websites"
+  ON published_websites FOR INSERT
+  WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public update access to published_websites" ON published_websites;
+CREATE POLICY "Allow public update access to published_websites"
+  ON published_websites FOR UPDATE
+  USING (true);
+
+DROP POLICY IF EXISTS "Allow public delete access to published_websites" ON published_websites;
+CREATE POLICY "Allow public delete access to published_websites"
+  ON published_websites FOR DELETE
+  USING (true);
+
+-- Enable realtime for published_websites
+ALTER PUBLICATION supabase_realtime ADD TABLE published_websites;
+
+-- ============================================
 -- CLEANUP (IF NEEDED)
 -- ============================================
 -- Uncomment these ONLY if you want to completely reset the database
 
+-- DROP TABLE IF EXISTS published_websites CASCADE;
 -- DROP TABLE IF EXISTS client_activities CASCADE;
 -- DROP TABLE IF EXISTS clients CASCADE;
 -- DROP TABLE IF EXISTS lead_activities CASCADE;

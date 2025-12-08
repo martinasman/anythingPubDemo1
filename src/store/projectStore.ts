@@ -200,8 +200,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     rawArtifacts.forEach((artifact) => {
       console.log('[Store] Processing artifact:', artifact.type);
       if (artifact.type === 'website_code') {
-        artifacts.website = artifact.data as WebsiteArtifact;
-        console.log('[Store] Loaded website artifact');
+        artifacts.website = {
+          ...(artifact.data as WebsiteArtifact),
+          version: artifact.version || 1,
+          previous_data: artifact.previous_data as WebsiteArtifact | undefined,
+        };
+        console.log('[Store] Loaded website artifact, version:', artifact.version);
       } else if (artifact.type === 'identity') {
         artifacts.identity = artifact.data as IdentityArtifact;
         console.log('[Store] Loaded identity artifact');
@@ -305,8 +309,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const newArtifacts = { ...state.artifacts };
 
       if (type === 'website_code') {
-        console.log('[Store] Updating website artifact');
-        newArtifacts.website = artifact.data as WebsiteArtifact;
+        console.log('[Store] Updating website artifact, version:', artifact.version);
+        newArtifacts.website = {
+          ...(artifact.data as WebsiteArtifact),
+          version: artifact.version || 1,
+          previous_data: artifact.previous_data as WebsiteArtifact | undefined,
+        };
       } else if (type === 'identity') {
         console.log('[Store] Updating identity artifact');
         const identityData = artifact.data as IdentityArtifact;

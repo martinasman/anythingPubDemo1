@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import { useProjectStore } from '@/store/projectStore';
-import { Globe, Monitor, Smartphone, Tablet, ExternalLink, ArrowLeft, Code, AlertCircle, ChevronDown, RotateCw, Check, Plus, MousePointer2, X } from 'lucide-react';
+import { Globe, Monitor, Smartphone, Tablet, ExternalLink, ArrowLeft, Code, AlertCircle, ChevronDown, RotateCw, Check, Plus, MousePointer2, History } from 'lucide-react';
 import { useCanvasBackground } from '@/hooks/useCanvasBackground';
 import WebsiteCodeModal from './WebsiteCodeModal';
 
@@ -24,7 +24,9 @@ export default function WebsiteFocusView() {
     isSelectMode,
     setIsSelectMode,
     setSelectedElementSelector,
-    setSelectedElementInfo: setStoreElementInfo
+    setSelectedElementInfo: setStoreElementInfo,
+    project,
+    refreshArtifact,
   } = useProjectStore();
   const { bgStyle, isDark } = useCanvasBackground();
   const [viewport, setViewport] = useState<Viewport>('desktop');
@@ -33,6 +35,8 @@ export default function WebsiteFocusView() {
   const [selectedFilePath, setSelectedFilePath] = useState<string>('/index.html');
   const [pageDropdownOpen, setPageDropdownOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [isUndoing, setIsUndoing] = useState(false);
+  const [versionDropdownOpen, setVersionDropdownOpen] = useState(false);
 
   // Local state for element info display (also synced to store for ChatPanel)
   const [selectedElementInfo, setSelectedElementInfo] = useState<{
@@ -109,6 +113,10 @@ export default function WebsiteFocusView() {
     const page = htmlPages.find(p => p.path === selectedFilePath);
     return page?.displayPath || '/';
   }, [htmlPages, selectedFilePath]);
+
+  // Get current version number from artifacts
+  const currentVersion = artifacts.website?.version || 1;
+  const hasPreviousVersion = artifacts.website?.previous_data !== undefined && artifacts.website?.previous_data !== null;
 
   // Selection script to inject when in select mode
   // Supports selecting semantic sections (header, footer, section, nav) and individual elements
@@ -366,6 +374,36 @@ export default function WebsiteFocusView() {
     setRefreshKey(prev => prev + 1);
   };
 
+  // Handle undo - restore previous website version
+  const handleUndo = async () => {
+    if (!project?.id || isUndoing) return;
+
+    setIsUndoing(true);
+    try {
+      const response = await fetch('/api/artifacts/undo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: project.id, type: 'website_code' }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        console.error('[Undo] Failed:', error);
+        alert(error.error || 'Failed to undo changes');
+        return;
+      }
+
+      // Refresh the website artifact to get the restored version
+      await refreshArtifact('website_code');
+      setRefreshKey(prev => prev + 1); // Force iframe refresh
+    } catch (error) {
+      console.error('[Undo] Error:', error);
+      alert('Failed to undo changes');
+    } finally {
+      setIsUndoing(false);
+    }
+  };
+
   return (
     <div className="h-full overflow-hidden flex flex-col rounded-tl-2xl" style={bgStyle}>
       {/* Browser Chrome - z-index ensures dropdown appears above iframe */}
@@ -397,18 +435,13 @@ export default function WebsiteFocusView() {
               </span>
             </div>
 
-            {/* Page selector dropdown - always visible */}
+            {/* Page selector dropdown - compact */}
             <button
               onClick={() => setPageDropdownOpen(!pageDropdownOpen)}
-              className={`flex-1 px-3 py-2 text-sm font-mono flex items-center justify-between gap-2 ${isDark ? 'hover:bg-zinc-600' : 'hover:bg-zinc-50'} transition-colors`}
+              className={`px-3 py-2 text-sm font-mono flex items-center gap-2 ${isDark ? 'hover:bg-zinc-600' : 'hover:bg-zinc-50'} transition-colors`}
             >
               <span className={textPrimary}>{currentPageDisplay}</span>
-              <div className="flex items-center gap-1">
-                <span className={`text-xs ${textSecondary}`}>
-                  {htmlPages.length} page{htmlPages.length !== 1 ? 's' : ''}
-                </span>
-                <ChevronDown size={14} className={`${textSecondary} transition-transform ${pageDropdownOpen ? 'rotate-180' : ''}`} />
-              </div>
+              <ChevronDown size={14} className={`${textSecondary} transition-transform ${pageDropdownOpen ? 'rotate-180' : ''}`} />
             </button>
           </div>
 
@@ -456,6 +489,56 @@ export default function WebsiteFocusView() {
           )}
         </div>
 
+        {/* Version selector */}
+        <div className="relative">
+          <button
+            onClick={() => setVersionDropdownOpen(!versionDropdownOpen)}
+            disabled={!hasPreviousVersion && currentVersion <= 1}
+            className={`flex items-center gap-1.5 px-2.5 py-2 text-xs font-medium ${isDark ? 'bg-zinc-700 hover:bg-zinc-600' : 'bg-white hover:bg-zinc-50'} rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed`}
+            title={hasPreviousVersion ? 'Version history' : 'No previous versions'}
+          >
+            <History size={14} className={textSecondary} />
+            <span className={textPrimary}>v{currentVersion}</span>
+            {hasPreviousVersion && (
+              <ChevronDown size={12} className={`${textSecondary} transition-transform ${versionDropdownOpen ? 'rotate-180' : ''}`} />
+            )}
+          </button>
+
+          {/* Version dropdown */}
+          {versionDropdownOpen && hasPreviousVersion && (
+            <>
+              <div
+                className="fixed inset-0 z-40"
+                onClick={() => setVersionDropdownOpen(false)}
+              />
+              <div className={`absolute top-full right-0 mt-1 ${isDark ? 'bg-zinc-800 border-zinc-700' : 'bg-white border-zinc-200'} border rounded-lg shadow-xl z-50 min-w-[140px]`}>
+                <div className={`px-3 py-2 text-xs font-medium ${textSecondary} border-b ${borderColor}`}>
+                  Versions
+                </div>
+                <button
+                  className={`w-full px-3 py-2 text-sm flex items-center justify-between gap-2 ${isDark ? 'bg-zinc-700 text-white' : 'bg-zinc-100 text-zinc-900'}`}
+                >
+                  <span>v{currentVersion}</span>
+                  <span className={`text-xs ${textSecondary}`}>current</span>
+                </button>
+                <button
+                  onClick={() => {
+                    handleUndo();
+                    setVersionDropdownOpen(false);
+                  }}
+                  disabled={isUndoing}
+                  className={`w-full px-3 py-2 text-sm flex items-center justify-between gap-2 ${textSecondary} ${isDark ? 'hover:bg-zinc-700 hover:text-white' : 'hover:bg-zinc-50 hover:text-zinc-900'} transition-colors disabled:opacity-50`}
+                >
+                  <span>v{currentVersion - 1}</span>
+                  <span className={`text-xs ${isUndoing ? 'animate-pulse' : ''}`}>
+                    {isUndoing ? 'restoring...' : 'restore'}
+                  </span>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
         {/* Viewport Toggle */}
         <div className={`flex items-center gap-0.5 ${isDark ? 'bg-zinc-700' : 'bg-white'} rounded-lg p-1`}>
           <button
@@ -492,26 +575,6 @@ export default function WebsiteFocusView() {
             <Smartphone size={16} />
           </button>
         </div>
-
-        {/* Selection Mode Toggle */}
-        <button
-          onClick={() => {
-            setIsSelectMode(!isSelectMode);
-            if (isSelectMode) {
-              setSelectedElementInfo(null);
-              setSelectedElementSelector(null);
-              setStoreElementInfo(null);
-            }
-          }}
-          className={`p-1.5 rounded-lg transition-colors ${
-            isSelectMode
-              ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900'
-              : `${textSecondary} ${isDark ? 'hover:text-white hover:bg-zinc-700' : 'hover:text-zinc-900 hover:bg-zinc-200'}`
-          }`}
-          title={isSelectMode ? 'Exit selection mode (ESC)' : 'Click to select elements'}
-        >
-          <MousePointer2 size={16} />
-        </button>
 
         {/* Refresh button */}
         <button

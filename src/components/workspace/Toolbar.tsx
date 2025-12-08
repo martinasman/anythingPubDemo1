@@ -6,6 +6,7 @@ import Image from 'next/image';
 import { useTheme } from 'next-themes';
 import { useEffect, useState } from 'react';
 import { useProjectStore } from '@/store/projectStore';
+import PublishModal from '@/components/publish/PublishModal';
 
 
 interface ToolbarProps {
@@ -15,6 +16,7 @@ interface ToolbarProps {
 export default function Toolbar({ projectName = 'New Project' }: ToolbarProps) {
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
+  const [showPublishModal, setShowPublishModal] = useState(false);
   const { canvasState, setCanvasState } = useProjectStore();
 
   useEffect(() => {
@@ -133,6 +135,7 @@ export default function Toolbar({ projectName = 'New Project' }: ToolbarProps) {
 
           {/* Publish Button */}
           <button
+            onClick={() => setShowPublishModal(true)}
             className="flex items-center gap-1.5 px-3 h-7 text-xs font-medium text-white bg-zinc-900 dark:bg-white dark:text-zinc-900 rounded-md hover:bg-zinc-800 dark:hover:bg-zinc-100 transition-colors"
             aria-label="Publish"
           >
@@ -141,6 +144,13 @@ export default function Toolbar({ projectName = 'New Project' }: ToolbarProps) {
           </button>
         </div>
       </div>
+
+      {/* Publish Modal */}
+      <PublishModal
+        isOpen={showPublishModal}
+        onClose={() => setShowPublishModal(false)}
+        sourceType="project"
+      />
     </div>
   );
 }

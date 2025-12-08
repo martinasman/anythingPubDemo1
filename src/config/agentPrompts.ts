@@ -4,6 +4,8 @@
 // All AI agent system prompts and configurations in one place
 // Easy to update without touching tool logic
 
+import type { DesignInspiration } from '@/lib/services/designReferences/types';
+
 // ============================================
 // INDUSTRY COLOR PSYCHOLOGY
 // ============================================
@@ -1912,5 +1914,124 @@ ${siteData.navigation.map(nav => `- ${nav.label}: ${nav.path}`).join('\n')}
 
 PAGES TO GENERATE:
 ${siteData.pages.map(page => `- ${page.path}: "${page.title}"`).join('\n')}
+`;
+}
+
+// ============================================
+// DESIGN INSPIRATION PROMPT BUILDER
+// ============================================
+
+/**
+ * Build a prompt section from analyzed design inspiration.
+ * This injects the extracted design patterns AND section structure into the generation prompt.
+ */
+export function buildInspirationPromptSection(inspiration: DesignInspiration): string {
+  // Build section-by-section instructions if available
+  let sectionInstructions = '';
+  if (inspiration.sectionStructure && inspiration.sectionStructure.order) {
+    const sectionOrder = inspiration.sectionStructure.order;
+    const sections = inspiration.sectionStructure.sections || {};
+
+    sectionInstructions = `
+███████████████████████████████████████████████████████████████████
+🏗️ PAGE STRUCTURE - FOLLOW THIS EXACT SECTION ORDER
+███████████████████████████████████████████████████████████████████
+
+You MUST include these sections IN THIS EXACT ORDER:
+${sectionOrder.map((name, i) => `${i + 1}. ${name.toUpperCase()}`).join('\n')}
+
+───────────────────────────────────────────────────────────────────
+SECTION-BY-SECTION SPECIFICATIONS
+───────────────────────────────────────────────────────────────────
+${sectionOrder.map((name, i) => {
+  const section = sections[name];
+  if (!section) return `\n${i + 1}. ${name.toUpperCase()}\n   (Use standard layout for this section type)`;
+
+  return `
+${i + 1}. ${name.toUpperCase()}
+   Layout: ${section.layout}
+   ${section.hasImage ? '✓ Includes image/visual' : ''}
+   ${section.hasCards ? `✓ Has ${section.cardCount || 'multiple'} cards` : ''}
+   ${section.hasIcons ? '✓ Uses icons' : ''}
+   Description: ${section.description}
+   Classes: ${section.tailwindClasses}
+`;
+}).join('')}
+
+`;
+  }
+
+  return `
+███████████████████████████████████████████████████████████████████
+🎨 DESIGN REFERENCE - YOU MUST REPLICATE THIS DESIGN EXACTLY
+███████████████████████████████████████████████████████████████████
+
+DESIGN MOOD: "${inspiration.overallVibe}"
+
+${inspiration.designNotes ? `CRITICAL DESIGN NOTES: ${inspiration.designNotes}` : ''}
+
+${sectionInstructions}
+───────────────────────────────────────────────────────────────────
+GLOBAL LAYOUT RULES
+───────────────────────────────────────────────────────────────────
+• Hero Style: ${inspiration.layout.heroStyle}
+• Grid Pattern: ${inspiration.layout.gridPattern}
+• Section Spacing: ${inspiration.layout.sectionSpacing} (use ${inspiration.layout.sectionSpacing === 'dramatic' ? 'py-32 md:py-48' : inspiration.layout.sectionSpacing === 'generous' ? 'py-24 md:py-32' : 'py-16 md:py-24'})
+• Navigation: ${inspiration.layout.navStyle}
+
+───────────────────────────────────────────────────────────────────
+COLOR SYSTEM (Reference colors - adapt for client's brand)
+───────────────────────────────────────────────────────────────────
+• Primary: ${inspiration.colorScheme.dominantColor}
+• Accent/CTA: ${inspiration.colorScheme.accentColor}
+• Background: ${inspiration.colorScheme.backgroundColor}
+• Text: ${inspiration.colorScheme.textColor}
+• Style: ${inspiration.colorScheme.backgroundStyle}
+
+───────────────────────────────────────────────────────────────────
+TYPOGRAPHY SYSTEM
+───────────────────────────────────────────────────────────────────
+• Heading Style: ${inspiration.typography.headingStyle}
+• Heading Weight: ${inspiration.typography.headingWeight}
+• Body Font: ${inspiration.typography.bodyFont}
+• Text Density: ${inspiration.typography.textDensity}
+
+───────────────────────────────────────────────────────────────────
+COMPONENT STYLES
+───────────────────────────────────────────────────────────────────
+• Buttons: ${inspiration.components.buttonStyle}
+• Cards: ${inspiration.components.cardStyle}
+• Images: ${inspiration.components.imageStyle}
+
+───────────────────────────────────────────────────────────────────
+EFFECTS TO INCLUDE
+───────────────────────────────────────────────────────────────────
+${inspiration.effects.hasAnimations ? '✓ Scroll animations and transitions' : '✗ Minimal animations'}
+${inspiration.effects.hasShadows ? '✓ Prominent shadows (shadow-lg, shadow-xl)' : '✗ Subtle/no shadows'}
+${inspiration.effects.hasGradients ? '✓ Gradient backgrounds/overlays' : '✗ Solid colors'}
+${inspiration.effects.hasGlassmorphism ? '✓ Glassmorphism effects' : '✗ Solid backgrounds'}
+${inspiration.effects.hasHoverEffects ? '✓ Hover states and micro-interactions' : '✗ Simple interactions'}
+
+───────────────────────────────────────────────────────────────────
+TAILWIND CLASS REFERENCE (Copy these exactly)
+───────────────────────────────────────────────────────────────────
+Hero: ${inspiration.tailwindClasses.hero}
+Sections: ${inspiration.tailwindClasses.sections}
+Cards: ${inspiration.tailwindClasses.cards}
+Buttons: ${inspiration.tailwindClasses.buttons}
+Headings: ${inspiration.tailwindClasses.headings}
+Body: ${inspiration.tailwindClasses.body}
+
+███████████████████████████████████████████████████████████████████
+⚠️ CRITICAL INSTRUCTION ⚠️
+
+The website you generate MUST:
+1. Have the EXACT same sections in the EXACT same order as specified above
+2. Match the visual style, spacing, and polish of a premium design
+3. Use the component styles and Tailwind classes provided
+4. Adapt CONTENT for the specific industry but keep the STRUCTURE identical
+
+DO NOT invent your own layout. Follow the reference EXACTLY.
+███████████████████████████████████████████████████████████████████
 `;
 }

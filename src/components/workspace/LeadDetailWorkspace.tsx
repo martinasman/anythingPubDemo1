@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   ArrowLeft,
   ChevronDown,
@@ -18,11 +18,15 @@ import {
   AlertCircle,
   RefreshCw,
   Trash2,
+  ImagePlus,
+  X,
+  Rocket,
 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
 import { useProjectStore } from '@/store/projectStore';
 import type { Lead } from '@/types/database';
 import { useCanvasBackground } from '@/hooks/useCanvasBackground';
+import PublishModal from '@/components/publish/PublishModal';
 
 interface LeadDetailWorkspaceProps {
   leadId: string;
@@ -55,6 +59,17 @@ export default function LeadDetailWorkspace({ leadId }: LeadDetailWorkspaceProps
   const [websiteProgress, setWebsiteProgress] = useState<{
     stages: Array<{ id: string; message: string; status: 'pending' | 'active' | 'complete' }>;
   } | null>(null);
+
+  // Design reference screenshot state
+  const [designScreenshot, setDesignScreenshot] = useState<{
+    file: File | null;
+    preview: string | null;
+    uploading: boolean;
+  }>({ file: null, preview: null, uploading: false });
+  const screenshotInputRef = useRef<HTMLInputElement>(null);
+
+  // Publish modal state
+  const [showPublishModal, setShowPublishModal] = useState(false);
 
   // Styling
   const bgPrimary = isDark ? 'bg-neutral-950' : 'bg-white';
@@ -201,6 +216,37 @@ export default function LeadDetailWorkspace({ leadId }: LeadDetailWorkspaceProps
     startTool('generate_lead_website');
 
     try {
+      // Upload design reference screenshot if provided
+      let designReferenceUrl: string | undefined;
+      if (designScreenshot.file) {
+        setDesignScreenshot(prev => ({ ...prev, uploading: true }));
+        updateToolStage('generate_lead_website', 'Uploading design reference...');
+
+        try {
+          const formData = new FormData();
+          formData.append('file', designScreenshot.file);
+          formData.append('projectId', project.id);
+
+          const uploadRes = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (uploadRes.ok) {
+            const { url } = await uploadRes.json();
+            designReferenceUrl = url;
+            console.log('[GenerateWebsite] Design reference uploaded:', url);
+          } else {
+            console.warn('[GenerateWebsite] Failed to upload design reference');
+          }
+        } catch (uploadError) {
+          console.warn('[GenerateWebsite] Error uploading design reference:', uploadError);
+          // Continue without design reference
+        } finally {
+          setDesignScreenshot(prev => ({ ...prev, uploading: false }));
+        }
+      }
+
       const response = await fetch(`/api/leads/${lead.id}/generate-website`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -209,6 +255,7 @@ export default function LeadDetailWorkspace({ leadId }: LeadDetailWorkspaceProps
           businessName: lead.companyName,
           projectId: project.id,
           websiteUrl: lead.website, // Pass source website URL
+          designReferenceUrl, // Pass design reference if uploaded
         }),
       });
 
@@ -419,6 +466,17 @@ export default function LeadDetailWorkspace({ leadId }: LeadDetailWorkspaceProps
                           <ExternalLink size={16} className={textSecondary} />
                           <span className={textPrimary}>Open in New Tab</span>
                         </a>
+                        <div className={`my-1 border-t ${borderColor}`} />
+                        <button
+                          onClick={() => {
+                            setSendDropdownOpen(false);
+                            setShowPublishModal(true);
+                          }}
+                          className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm ${isDark ? 'hover:bg-zinc-800' : 'hover:bg-zinc-50'} transition-colors`}
+                        >
+                          <Rocket size={16} className={textSecondary} />
+                          <span className={textPrimary}>Publish to Custom Domain</span>
+                        </button>
                       </div>
                     </>
                   )}
@@ -570,22 +628,86 @@ export default function LeadDetailWorkspace({ leadId }: LeadDetailWorkspaceProps
                 )}
 
                 {lead.website && (
-                  <button
-                    onClick={handleGenerateImprovedWebsite}
-                    disabled={generatingWebsite}
-                    className={`px-4 py-2 text-sm font-medium flex items-center justify-center gap-2 rounded-lg transition-colors mx-auto ${
-                      generatingWebsite
-                        ? isDark
-                          ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed'
-                          : 'bg-zinc-300 text-zinc-500 cursor-not-allowed'
-                        : isDark
-                          ? 'bg-blue-600 hover:bg-blue-500 text-white'
-                          : 'bg-blue-500 hover:bg-blue-600 text-white'
-                    }`}
-                  >
-                    {generatingWebsite && <Loader2 size={16} className="animate-spin" />}
-                    {generatingWebsite ? 'Generating...' : 'Generate Improved Website'}
-                  </button>
+                  <div className="flex flex-col items-center gap-3">
+                    {/* Screenshot upload for design reference */}
+                    <input
+                      ref={screenshotInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setDesignScreenshot({
+                            file,
+                            preview: URL.createObjectURL(file),
+                            uploading: false,
+                          });
+                        }
+                      }}
+                    />
+
+                    <div className="flex items-center gap-2">
+                      {designScreenshot.preview ? (
+                        <div className="relative group">
+                          <img
+                            src={designScreenshot.preview}
+                            alt="Design reference"
+                            className={`w-24 h-16 object-cover rounded-lg border-2 ${isDark ? 'border-zinc-700' : 'border-zinc-300'}`}
+                          />
+                          <button
+                            onClick={() => {
+                              if (designScreenshot.preview) {
+                                URL.revokeObjectURL(designScreenshot.preview);
+                              }
+                              setDesignScreenshot({ file: null, preview: null, uploading: false });
+                            }}
+                            className="absolute -top-2 -right-2 bg-red-500 hover:bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs shadow-sm transition-colors"
+                          >
+                            <X size={12} />
+                          </button>
+                          <span className={`text-xs ${textSecondary} mt-1 block text-center`}>Design ref</span>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => screenshotInputRef.current?.click()}
+                          disabled={generatingWebsite}
+                          className={`px-3 py-2 text-sm border-2 border-dashed rounded-lg transition-colors flex items-center gap-2 ${
+                            isDark
+                              ? 'border-zinc-700 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300'
+                              : 'border-zinc-300 text-zinc-500 hover:border-zinc-400 hover:text-zinc-600'
+                          } ${generatingWebsite ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                          <ImagePlus size={16} />
+                          <span>Add design reference</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Generate button */}
+                    <button
+                      onClick={handleGenerateImprovedWebsite}
+                      disabled={generatingWebsite || designScreenshot.uploading}
+                      className={`px-4 py-2 text-sm font-medium flex items-center justify-center gap-2 rounded-lg transition-colors ${
+                        generatingWebsite || designScreenshot.uploading
+                          ? isDark
+                            ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed'
+                            : 'bg-zinc-300 text-zinc-500 cursor-not-allowed'
+                          : isDark
+                            ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                            : 'bg-blue-500 hover:bg-blue-600 text-white'
+                      }`}
+                    >
+                      {(generatingWebsite || designScreenshot.uploading) && <Loader2 size={16} className="animate-spin" />}
+                      {designScreenshot.uploading
+                        ? 'Uploading design...'
+                        : generatingWebsite
+                          ? 'Generating...'
+                          : designScreenshot.file
+                            ? 'Generate with Design Reference'
+                            : 'Generate Improved Website'}
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
@@ -701,6 +823,15 @@ export default function LeadDetailWorkspace({ leadId }: LeadDetailWorkspaceProps
           )}
         </div>
       </div>
+
+      {/* Publish Modal */}
+      <PublishModal
+        isOpen={showPublishModal}
+        onClose={() => setShowPublishModal(false)}
+        sourceType="lead"
+        leadId={lead.id}
+        leadName={lead.companyName}
+      />
     </div>
   );
 }

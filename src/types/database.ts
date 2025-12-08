@@ -27,6 +27,10 @@ export type WebsiteArtifact = {
     crawledAt?: string;
     originalPageCount?: number;
   };
+
+  // Version info (populated from database artifact record)
+  version?: number;
+  previous_data?: WebsiteArtifact;
 };
 
 export type IdentityArtifact = {
@@ -535,6 +539,7 @@ export type Artifact = {
   type: ArtifactType;
   data: ArtifactData;
   version: number;
+  previous_data?: ArtifactData;
   created_at: string;
   updated_at: string;
 };
@@ -961,5 +966,92 @@ export function clientToClientRow(client: Client, projectId: string): Omit<Clien
     notes: client.notes || null,
     tags: client.tags || null,
     created_by: client.createdBy || null,
+  };
+}
+
+// ============================================
+// PUBLISHED WEBSITES TYPES
+// ============================================
+
+export type PublishedWebsiteRow = {
+  id: string;
+  project_id: string;
+  deployment_id: string | null;
+  deployment_url: string;
+  subdomain: string;
+  base_domain: string;
+  custom_domain: string | null;
+  source_type: 'project' | 'lead';
+  source_artifact_id: string | null;
+  lead_id: string | null;
+  access_level: 'public' | 'password' | 'private';
+  password_hash: string | null;
+  status: 'deploying' | 'published' | 'failed' | 'archived';
+  last_deployed_at: string | null;
+  view_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PublishedWebsite = {
+  id: string;
+  projectId: string;
+  deploymentId?: string;
+  deploymentUrl: string;
+  subdomain: string;
+  baseDomain: string;
+  customDomain?: string;
+  sourceType: 'project' | 'lead';
+  sourceArtifactId?: string;
+  leadId?: string;
+  accessLevel: 'public' | 'password' | 'private';
+  status: 'deploying' | 'published' | 'failed' | 'archived';
+  lastDeployedAt?: string;
+  viewCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+// Convert PublishedWebsiteRow to PublishedWebsite type
+export function publishedWebsiteRowToPublishedWebsite(row: PublishedWebsiteRow): PublishedWebsite {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    deploymentId: row.deployment_id || undefined,
+    deploymentUrl: row.deployment_url,
+    subdomain: row.subdomain,
+    baseDomain: row.base_domain,
+    customDomain: row.custom_domain || undefined,
+    sourceType: row.source_type,
+    sourceArtifactId: row.source_artifact_id || undefined,
+    leadId: row.lead_id || undefined,
+    accessLevel: row.access_level,
+    status: row.status,
+    lastDeployedAt: row.last_deployed_at || undefined,
+    viewCount: row.view_count,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+// Convert PublishedWebsite type to database row format
+export function publishedWebsiteToRow(
+  website: Omit<PublishedWebsite, 'id' | 'createdAt' | 'updatedAt'>
+): Omit<PublishedWebsiteRow, 'id' | 'created_at' | 'updated_at'> {
+  return {
+    project_id: website.projectId,
+    deployment_id: website.deploymentId || null,
+    deployment_url: website.deploymentUrl,
+    subdomain: website.subdomain,
+    base_domain: website.baseDomain,
+    custom_domain: website.customDomain || null,
+    source_type: website.sourceType,
+    source_artifact_id: website.sourceArtifactId || null,
+    lead_id: website.leadId || null,
+    access_level: website.accessLevel,
+    password_hash: null,
+    status: website.status,
+    last_deployed_at: website.lastDeployedAt || null,
+    view_count: website.viewCount,
   };
 }

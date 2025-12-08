@@ -10,8 +10,9 @@ import { generateText } from 'ai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { createClient } from '@supabase/supabase-js';
 import type { WebsiteArtifact } from '@/types/database';
-import { REMIX_ARCHITECT_PROMPT } from '@/config/agentPrompts';
+import { REMIX_ARCHITECT_PROMPT, buildInspirationPromptSection } from '@/config/agentPrompts';
 import { crawlSite, type CrawledSiteData, type CrawlProgress } from '@/lib/services/siteCrawler';
+import { getDesignInspiration, type DesignInspiration } from '@/lib/services/designReferences';
 
 // ============================================
 // SCHEMA DEFINITION
@@ -102,13 +103,62 @@ export async function remixWebsite(params: z.infer<typeof remixSchema> & {
     await emitProgress({
       phase: 'analyzing',
       step: 'brand',
-      progress: 35,
+      progress: 32,
       message: 'Analyzing brand and structure...',
       detail: `Found: ${crawledData.brand.companyName || 'Unknown business'}`,
     });
 
+    // Load design inspiration from reference screenshots
+    let designInspiration: DesignInspiration | null = null;
+    try {
+      await emitProgress({
+        phase: 'analyzing',
+        step: 'inspiration',
+        progress: 34,
+        message: 'Loading design inspiration...',
+        detail: 'Analyzing reference screenshot',
+      });
+      designInspiration = await getDesignInspiration();
+      if (designInspiration) {
+        // Show useful details instead of vague vibe text
+        const sectionCount = designInspiration.sectionStructure?.order?.length || 0;
+        const primaryColor = designInspiration.colorScheme?.dominantColor || 'default';
+        const accentColor = designInspiration.colorScheme?.accentColor || 'default';
+        const heroStyle = designInspiration.layout?.heroStyle || 'centered';
+
+        console.log('[Remix Tool] Design inspiration loaded:', {
+          colors: [primaryColor, accentColor],
+          sections: sectionCount,
+          heroStyle: heroStyle,
+        });
+        await emitProgress({
+          phase: 'analyzing',
+          step: 'inspiration_loaded',
+          progress: 35,
+          message: 'Design inspiration loaded',
+          detail: `${sectionCount} sections | ${primaryColor} + ${accentColor} | ${heroStyle} hero`,
+        });
+      } else {
+        console.log('[Remix Tool] No design inspiration configured, using default styles');
+      }
+    } catch (error) {
+      console.warn('[Remix Tool] Failed to load design inspiration:', error);
+    }
+
+    await emitProgress({
+      phase: 'analyzing',
+      step: 'preparing',
+      progress: 36,
+      message: 'Preparing generation prompt...',
+    });
+
     // Build the prompt with all crawled data
     const siteDataPrompt = buildSiteDataPrompt(crawledData);
+
+    // Build inspiration section if available
+    const inspirationSection = designInspiration
+      ? buildInspirationPromptSection(designInspiration)
+      : '';
 
     // ============================================
     // PHASE 3: GENERATE MODERN WEBSITE
@@ -139,7 +189,7 @@ export async function remixWebsite(params: z.infer<typeof remixSchema> & {
 
     // Build the text prompt with STRONG multi-page enforcement
     const textPrompt = `${REMIX_ARCHITECT_PROMPT}
-
+${inspirationSection}
 ${siteDataPrompt}
 
 ═══════════════════════════════════════════════════════════════════
