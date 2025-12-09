@@ -15,7 +15,9 @@ function SignInContent() {
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [mounted, setMounted] = useState(false);
 
-  const redirect = searchParams.get('redirect') ?? '/';
+  // Always redirect to homepage after signin - ignore any old redirect params
+  // This ensures users always see the modern homepage, not old /agency or /commerce pages
+  const redirect = '/';
   const error = searchParams.get('error');
 
   useEffect(() => {
