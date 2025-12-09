@@ -2,16 +2,25 @@ import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { createClient } from '@supabase/supabase-js';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2025-11-17.clover',
-});
+// Lazy initialization to avoid build-time errors when env vars aren't set
+function getStripe() {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    throw new Error('STRIPE_SECRET_KEY environment variable is not set');
+  }
+  return new Stripe(process.env.STRIPE_SECRET_KEY, {
+    apiVersion: '2025-11-17.clover',
+  });
+}
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+function getSupabase() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+}
 
 export async function POST(request: NextRequest) {
+  const stripe = getStripe();
   const body = await request.text();
   const sig = request.headers.get('stripe-signature');
 
@@ -60,6 +69,7 @@ export async function POST(request: NextRequest) {
 }
 
 async function handleSuccessfulPayment(session: Stripe.Checkout.Session) {
+  const supabase = getSupabase();
   const leadId = session.metadata?.leadId;
   const amountTotal = session.amount_total;
 
@@ -106,6 +116,7 @@ async function handleSuccessfulPayment(session: Stripe.Checkout.Session) {
 }
 
 async function handleFailedPayment(paymentIntent: Stripe.PaymentIntent) {
+  const supabase = getSupabase();
   const leadId = paymentIntent.metadata?.leadId;
 
   if (!leadId) {
