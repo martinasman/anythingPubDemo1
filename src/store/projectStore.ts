@@ -127,6 +127,7 @@ interface ProjectState {
   // Lead management actions
   updateLeadStatus: (leadId: string, status: Lead['status']) => Promise<void>;
   addLeadActivity: (activity: Omit<LeadActivity, 'id' | 'createdAt'>) => Promise<void>;
+  deleteLead: (leadId: string) => Promise<void>;
 
   // First Week Plan actions
   updateTaskCompletion: (taskId: string, completed: boolean) => Promise<void>;
@@ -511,6 +512,50 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
+  deleteLead: async (leadId) => {
+    const state = get();
+    const projectId = state.project?.id;
+
+    if (!projectId) {
+      console.error('[Store] No project ID to delete lead');
+      return;
+    }
+
+    // Optimistic update - remove from leads artifact
+    set((state) => ({
+      artifacts: {
+        ...state.artifacts,
+        leads: state.artifacts.leads ? {
+          ...state.artifacts.leads,
+          leads: state.artifacts.leads.leads.filter(l => l.id !== leadId),
+          activities: (state.artifacts.leads.activities || []).filter(a => a.leadId !== leadId)
+        } : null
+      }
+    }));
+
+    // Also update canvas state if we're viewing the deleted lead
+    const canvasState = get().canvasState;
+    if (canvasState.type === 'lead-detail' && canvasState.leadId === leadId) {
+      set({ canvasState: { type: 'overview' } });
+    }
+
+    // Persist to API
+    try {
+      const response = await fetch(`/api/leads/${leadId}?projectId=${projectId}`, {
+        method: 'DELETE'
+      });
+
+      if (!response.ok) {
+        console.error('[Store] Failed to delete lead:', response.status);
+        // Could revert optimistic update here if needed
+      } else {
+        console.log('[Store] Lead deleted successfully:', leadId);
+      }
+    } catch (error) {
+      console.error('[Store] Failed to delete lead:', error);
+    }
+  },
+
   // First Week Plan actions
   updateTaskCompletion: async (taskId, completed) => {
     const state = get();
@@ -670,34 +715,61 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   refreshArtifact: async (type) => {
-    const { project, updateArtifact } = get();
+    const { project, updateArtifact, artifacts } = get();
     if (!project) {
       console.log('[Store] refreshArtifact: No project, skipping');
       return;
     }
 
-    console.log('[Store] refreshArtifact: Fetching', type, 'for project', project.id);
+    const currentVersion = type === 'website_code' ? (artifacts.website?.version ?? 0) : 0;
+    console.log('[Store] refreshArtifact:', type, 'current version:', currentVersion);
 
-    try {
-      const response = await fetch(`/api/artifacts/get?projectId=${project.id}&type=${type}`);
-      if (!response.ok) {
-        console.error('[Store] refreshArtifact: Failed to fetch', response.status);
+    // Retry up to 15 times with 300ms delay (4.5 seconds total max)
+    // Supabase can be slow to commit large HTML changes
+    for (let attempt = 0; attempt < 15; attempt++) {
+      try {
+        const response = await fetch(`/api/artifacts/get?projectId=${project.id}&type=${type}`);
+        if (!response.ok) {
+          console.error('[Store] refreshArtifact: Failed to fetch', response.status);
+          return;
+        }
+
+        const { artifact } = await response.json();
+        if (artifact) {
+          console.log('[Store] refreshArtifact: Got version:', artifact.version, '(current:', currentVersion, ')');
+
+          // For website, wait for version to increment; for others, update immediately
+          if (type !== 'website_code' || artifact.version > currentVersion || currentVersion === 0) {
+            // Force new object reference to trigger React re-render
+            const freshArtifact = JSON.parse(JSON.stringify(artifact));
+            updateArtifact(type, freshArtifact);
+            console.log('[Store] refreshArtifact: Updated to version:', artifact.version);
+            return;
+          }
+
+          // Version not incremented yet, wait and retry
+          console.log('[Store] refreshArtifact: Waiting for new version, attempt', attempt + 1);
+          await new Promise(r => setTimeout(r, 300));
+        } else {
+          console.log('[Store] refreshArtifact: No artifact found for type:', type);
+          return;
+        }
+      } catch (error) {
+        console.error('[Store] refreshArtifact: Error', error);
         return;
       }
+    }
 
+    // After all retries, force update anyway (maybe version didn't change)
+    console.log('[Store] refreshArtifact: Max retries reached, forcing update');
+    try {
+      const response = await fetch(`/api/artifacts/get?projectId=${project.id}&type=${type}`);
       const { artifact } = await response.json();
       if (artifact) {
-        console.log('[Store] refreshArtifact: Got artifact for type:', type);
-        console.log('[Store] refreshArtifact: Artifact data preview:', JSON.stringify(artifact).substring(0, 200));
-        if (type === 'leads' && artifact.data?.leads) {
-          console.log('[Store] refreshArtifact: Found', artifact.data.leads.length, 'leads in artifact');
-        }
-        updateArtifact(type, artifact);
-      } else {
-        console.log('[Store] refreshArtifact: No artifact found for type:', type);
+        updateArtifact(type, JSON.parse(JSON.stringify(artifact)));
       }
-    } catch (error) {
-      console.error('[Store] refreshArtifact: Error', error);
+    } catch (e) {
+      console.error('[Store] refreshArtifact: Final fetch failed', e);
     }
   },
 

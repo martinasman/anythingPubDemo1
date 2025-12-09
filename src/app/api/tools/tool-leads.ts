@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
 import type { Lead, LeadsArtifact, WebsiteAnalysis, leadToLeadRow } from '@/types/database';
-import { searchGoogleMapsBusinesses, GoogleMapsResult } from '@/lib/services/serpapi';
+import { searchGoogleMapsBusinesses, searchBusinessesWithoutWebsites, GoogleMapsResult } from '@/lib/services/serpapi';
 import { analyzeWebsite, getWebsitePriority } from '@/lib/services/websiteAnalyzer';
 
 // ============================================
@@ -12,6 +12,8 @@ export const leadsSchema = z.object({
   location: z.string().describe('Location to search for businesses (e.g., "Austin, TX", "Miami, FL")'),
   searchTerms: z.string().optional().describe('Optional keywords to narrow search (e.g., "restaurants", "contractors")'),
   numberOfLeads: z.number().min(5).max(50).optional().describe('Number of leads to generate (default: 20)'),
+  noWebsiteOnly: z.boolean().optional().describe('Only return businesses without websites - highest value targets'),
+  categories: z.array(z.string()).optional().describe('Specific business categories to search (e.g., ["plumbers", "electricians"])'),
 });
 
 // ============================================
@@ -137,6 +139,28 @@ function calculateLeadScore(
   // Reserve 3 points for email if we had it
   // factors.contactAvailability += business.email ? 3 : 0;
 
+  // 5. EXTRA SIGNALS FOR NO-WEBSITE BUSINESSES (bonus points)
+  // These businesses are highest value - add bonus for good signals
+  if (!business.website) {
+    // Has phone = contactable (critical for no-website businesses)
+    if (business.phone) {
+      factors.contactAvailability += 5;
+      breakdown.push('Has phone but no website (+5)');
+    }
+
+    // Has reviews = active, legitimate business
+    if (business.reviewCount && business.reviewCount > 5) {
+      factors.businessSignals += 10;
+      breakdown.push(`Active business without website (${business.reviewCount} reviews) (+10)`);
+    }
+
+    // High rating without website = good business, bad online presence = great target
+    if (business.rating && business.rating >= 4.0) {
+      factors.websiteOpportunity += 5;
+      breakdown.push(`Good business (${business.rating}★) needs online presence (+5)`);
+    }
+  }
+
   const totalScore =
     factors.websiteOpportunity +
     factors.businessSignals +
@@ -254,69 +278,89 @@ async function enrichLeadWithAnalysis(
 // CHAT OUTPUT FORMATTING
 // ============================================
 
-function formatLeadsForChat(leads: Lead[]): string {
+function formatLeadsForChat(leads: Lead[], noWebsiteOnlyMode: boolean = false): string {
   // Group by website status
-  const noWebsite = leads.filter(l => l.websiteAnalysis?.status === 'none');
+  const noWebsite = leads.filter(l => l.websiteAnalysis?.status === 'none' || !l.website);
   const broken = leads.filter(l => l.websiteAnalysis?.status === 'broken');
   const poor = leads.filter(l => l.websiteAnalysis?.status === 'poor');
   const outdated = leads.filter(l => l.websiteAnalysis?.status === 'outdated');
   const good = leads.filter(l => l.websiteAnalysis?.status === 'good');
 
-  let output = '## Website Analysis Results\n\n';
+  let output = noWebsiteOnlyMode
+    ? '## 🎯 Businesses Needing Websites\n\n'
+    : '## Website Analysis Results\n\n';
 
   if (noWebsite.length > 0) {
-    output += `### 🔴 HIGH PRIORITY - No Website (${noWebsite.length})\n`;
+    output += noWebsiteOnlyMode
+      ? `### 🔥 HIGHEST VALUE TARGETS - No Website (${noWebsite.length})\n`
+      : `### 🔴 HIGH PRIORITY - No Website (${noWebsite.length})\n`;
+
+    output += '*These businesses are on Google Maps but have NO website at all!*\n\n';
+
     noWebsite.forEach(lead => {
-      output += `- **${lead.companyName}** - No online presence detected\n`;
-      output += `  Score: ${lead.score}/100 | ${lead.phone || 'No phone'} | ${lead.rating ? `⭐ ${lead.rating}` : ''}\n`;
+      output += `**${lead.companyName}** (${lead.industry || 'Local Business'})\n`;
+      output += `- 📍 ${lead.address || 'Address unavailable'}\n`;
+      output += `- 📞 ${lead.phone || 'No phone listed'}\n`;
+      if (lead.rating) {
+        output += `- ⭐ ${lead.rating} (${lead.reviewCount || 0} reviews)\n`;
+      }
+      output += `- 💯 Score: **${lead.score}/100**\n`;
+      output += `- 💡 ${lead.suggestedAngle}\n\n`;
     });
-    output += '\n';
   }
 
-  if (broken.length > 0) {
-    output += `### 🔴 HIGH PRIORITY - Broken Websites (${broken.length})\n`;
-    broken.forEach(lead => {
-      output += `- **${lead.companyName}** - ${lead.website}\n`;
-      output += `  Issues: ${lead.websiteAnalysis?.issues.slice(0, 2).join(', ')}\n`;
-      output += `  Score: ${lead.score}/100\n`;
-    });
-    output += '\n';
-  }
+  // Only show other sections if not in noWebsiteOnly mode
+  if (!noWebsiteOnlyMode) {
+    if (broken.length > 0) {
+      output += `### 🔴 HIGH PRIORITY - Broken Websites (${broken.length})\n`;
+      broken.forEach(lead => {
+        output += `- **${lead.companyName}** - ${lead.website}\n`;
+        output += `  Issues: ${lead.websiteAnalysis?.issues.slice(0, 2).join(', ')}\n`;
+        output += `  Score: ${lead.score}/100\n`;
+      });
+      output += '\n';
+    }
 
-  if (poor.length > 0) {
-    output += `### 🔴 HIGH PRIORITY - Poor Quality (${poor.length})\n`;
-    poor.forEach(lead => {
-      output += `- **${lead.companyName}** - ${lead.website}\n`;
-      output += `  Issues: ${lead.websiteAnalysis?.issues.slice(0, 2).join(', ')}\n`;
-      output += `  Score: ${lead.score}/100\n`;
-    });
-    output += '\n';
-  }
+    if (poor.length > 0) {
+      output += `### 🔴 HIGH PRIORITY - Poor Quality (${poor.length})\n`;
+      poor.forEach(lead => {
+        output += `- **${lead.companyName}** - ${lead.website}\n`;
+        output += `  Issues: ${lead.websiteAnalysis?.issues.slice(0, 2).join(', ')}\n`;
+        output += `  Score: ${lead.score}/100\n`;
+      });
+      output += '\n';
+    }
 
-  if (outdated.length > 0) {
-    output += `### 🟡 MEDIUM PRIORITY - Outdated (${outdated.length})\n`;
-    outdated.forEach(lead => {
-      const lastUpdate = lead.websiteAnalysis?.lastUpdated || 'Unknown';
-      output += `- **${lead.companyName}** - Last updated: ${lastUpdate}\n`;
-      output += `  Score: ${lead.score}/100\n`;
-    });
-    output += '\n';
-  }
+    if (outdated.length > 0) {
+      output += `### 🟡 MEDIUM PRIORITY - Outdated (${outdated.length})\n`;
+      outdated.forEach(lead => {
+        const lastUpdate = lead.websiteAnalysis?.lastUpdated || 'Unknown';
+        output += `- **${lead.companyName}** - Last updated: ${lastUpdate}\n`;
+        output += `  Score: ${lead.score}/100\n`;
+      });
+      output += '\n';
+    }
 
-  if (good.length > 0) {
-    output += `### 🟢 LOW PRIORITY - Good Websites (${good.length})\n`;
-    good.forEach(lead => {
-      output += `- **${lead.companyName}** - Website in good condition\n`;
-      output += `  Score: ${lead.score}/100\n`;
-    });
-    output += '\n';
+    if (good.length > 0) {
+      output += `### 🟢 LOW PRIORITY - Good Websites (${good.length})\n`;
+      good.forEach(lead => {
+        output += `- **${lead.companyName}** - Website in good condition\n`;
+        output += `  Score: ${lead.score}/100\n`;
+      });
+      output += '\n';
+    }
   }
 
   // Summary
   output += '---\n';
-  output += `**Total leads analyzed:** ${leads.length}\n`;
-  output += `**High priority (no site/broken/poor):** ${noWebsite.length + broken.length + poor.length}\n`;
-  output += `**Medium priority (outdated):** ${outdated.length}\n`;
+  if (noWebsiteOnlyMode) {
+    output += `**Found ${noWebsite.length} businesses without websites**\n`;
+    output += `These are your highest-value prospects - they need a website!\n`;
+  } else {
+    output += `**Total leads analyzed:** ${leads.length}\n`;
+    output += `**High priority (no site/broken/poor):** ${noWebsite.length + broken.length + poor.length}\n`;
+    output += `**Medium priority (outdated):** ${outdated.length}\n`;
+  }
 
   return output;
 }
@@ -335,17 +379,12 @@ export async function generateLeads(params: z.infer<typeof leadsSchema> & { proj
     location,
     searchTerms,
     numberOfLeads = 20,
+    noWebsiteOnly = false,
+    categories,
     projectId
   } = params;
 
   try {
-    // Build search query - broad location-based search
-    const searchQuery = searchTerms
-      ? `${searchTerms} near ${location}`
-      : `small business near ${location}`;
-
-    console.log(`[Leads] Searching: "${searchQuery}"...`);
-
     // 1. Build ICP (website-quality focused)
     const icp: ICP = {
       targetLocation: location,
@@ -359,21 +398,43 @@ export async function generateLeads(params: z.infer<typeof leadsSchema> & { proj
       solutionType: 'web design',
     };
 
-    // 2. Search Google Maps via SerpAPI
-    const businesses = await searchGoogleMapsBusinesses(
-      searchQuery,
-      location,
-      { limit: numberOfLeads * 2 } // Get extra to filter by quality
-    );
+    let businesses: GoogleMapsResult[];
+
+    // 2. Search based on mode
+    if (noWebsiteOnly) {
+      // Use specialized no-website search
+      console.log(`[Leads] Searching for businesses WITHOUT websites in ${location}...`);
+      const categoriesToSearch = categories || (searchTerms ? [searchTerms] : ['plumbers', 'electricians', 'restaurants', 'cleaning services']);
+      businesses = await searchBusinessesWithoutWebsites(
+        location,
+        categoriesToSearch,
+        numberOfLeads
+      );
+    } else {
+      // Standard search
+      const searchQuery = searchTerms
+        ? `${searchTerms} near ${location}`
+        : `small business near ${location}`;
+
+      console.log(`[Leads] Searching: "${searchQuery}"...`);
+
+      businesses = await searchGoogleMapsBusinesses(
+        searchQuery,
+        location,
+        { limit: numberOfLeads * 2 } // Get extra to filter by quality
+      );
+    }
 
     if (businesses.length === 0) {
       return {
         success: false,
-        error: 'No businesses found in this location. Try a different area.',
+        error: noWebsiteOnly
+          ? 'No businesses without websites found in this location. Try a different area or category.'
+          : 'No businesses found in this location. Try a different area.',
       };
     }
 
-    console.log(`[Leads] Found ${businesses.length} businesses, analyzing websites...`);
+    console.log(`[Leads] Found ${businesses.length} businesses${noWebsiteOnly ? ' without websites' : ''}, analyzing...`);
 
     // 3. Enrich leads with website analysis and scoring
     // Always analyze websites - that's the whole point now
@@ -383,7 +444,7 @@ export async function generateLeads(params: z.infer<typeof leadsSchema> & { proj
     for (let i = 0; i < Math.min(businesses.length, numberOfLeads); i += batchSize) {
       const batch = businesses.slice(i, i + batchSize);
       const batchResults = await Promise.all(
-        batch.map(biz => enrichLeadWithAnalysis(biz, icp, true)) // Always analyze
+        batch.map(biz => enrichLeadWithAnalysis(biz, icp, false)) // Skip slow website analysis for speed
       );
       enrichedLeads.push(...batchResults);
     }
@@ -482,10 +543,10 @@ export async function generateLeads(params: z.infer<typeof leadsSchema> & { proj
     }
 
     // 7. Format output for chat
-    const chatOutput = formatLeadsForChat(sortedLeads);
+    const chatOutput = formatLeadsForChat(sortedLeads, noWebsiteOnly);
 
     // 8. Generate summary - website quality focused
-    const noWebsite = sortedLeads.filter(l => l.websiteAnalysis?.status === 'none').length;
+    const noWebsiteCount = sortedLeads.filter(l => l.websiteAnalysis?.status === 'none' || !l.website).length;
     const brokenOrPoor = sortedLeads.filter(l =>
       l.websiteAnalysis?.status === 'broken' ||
       l.websiteAnalysis?.status === 'poor'
@@ -493,11 +554,17 @@ export async function generateLeads(params: z.infer<typeof leadsSchema> & { proj
     const outdated = sortedLeads.filter(l => l.websiteAnalysis?.status === 'outdated').length;
     const avgScore = leadsArtifact.searchSummary?.avgScore || 0;
 
+    // Different summary based on search mode
+    const summary = noWebsiteOnly
+      ? `🎯 Found **${noWebsiteCount} businesses without websites** in ${location}! These are your highest-value prospects. Average opportunity score: ${avgScore}/100.`
+      : `Found ${sortedLeads.length} businesses with website opportunities in ${location}. **${noWebsiteCount} have no website**, **${brokenOrPoor} have broken/poor sites**, ${outdated} are outdated. Average opportunity score: ${avgScore}/100.`;
+
     return {
       success: true,
       leads: sortedLeads,
       chatOutput,
-      summary: `Found ${sortedLeads.length} businesses with website opportunities in ${location}. **${noWebsite} have no website**, **${brokenOrPoor} have broken/poor sites**, ${outdated} are outdated. Average opportunity score: ${avgScore}/100.`,
+      summary,
+      noWebsiteOnly, // Pass through so UI knows the mode
     };
   } catch (error) {
     console.error('[Leads] Generation error:', error);

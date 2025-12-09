@@ -2,7 +2,6 @@ import { z } from 'zod';
 import { generateText } from 'ai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { createClient } from '@supabase/supabase-js';
-import { parseHTML } from 'linkedom';
 import type { WebsiteArtifact } from '@/types/database';
 
 // ============================================
@@ -28,24 +27,10 @@ export interface ProgressUpdate {
 
 type ProgressCallback = (update: ProgressUpdate) => Promise<void>;
 
-interface HTMLEdit {
-  selector: string;
-  action: 'style' | 'text' | 'attribute' | 'addClass' | 'removeClass';
-  property?: string;
-  value: string;
-  description?: string;
-}
-
-interface CSSEdit {
-  selector: string;
-  property: string;
-  value: string;
-  description?: string;
-}
-
-interface EditResponse {
-  htmlEdits?: HTMLEdit[];
-  cssEdits?: CSSEdit[];
+// Image context for vision-based edits
+interface ImageContext {
+  referenceImages: Array<{ url: string; filename: string; purpose: string; mimeType: string }>;
+  contentImages: Array<{ url: string; filename: string; purpose: string; mimeType: string }>;
 }
 
 // ============================================
@@ -58,531 +43,371 @@ export const editWebsiteSchema = z.object({
 });
 
 // ============================================
-// HELPER: Extract useful context from HTML
+// SIMPLE DIRECT EDIT - No more selector nonsense
 // ============================================
-
-function extractHTMLContext(html: string): string {
-  const context: string[] = [];
-
-  // Get all class names used
-  const classMatches = html.match(/class="([^"]+)"/g) || [];
-  const classes = [...new Set(classMatches.map(m => m.replace('class="', '').replace('"', '')))];
-  if (classes.length > 0) {
-    context.push(`CSS Classes: ${classes.slice(0, 30).join(', ')}`);
-  }
-
-  // Get all IDs
-  const idMatches = html.match(/id="([^"]+)"/g) || [];
-  const ids = [...new Set(idMatches.map(m => m.replace('id="', '').replace('"', '')))];
-  if (ids.length > 0) {
-    context.push(`IDs: ${ids.slice(0, 20).join(', ')}`);
-  }
-
-  // Get button texts
-  const buttons = html.match(/<button[^>]*>([^<]+)<\/button>/g) || [];
-  if (buttons.length > 0) {
-    context.push(`Buttons: ${buttons.slice(0, 5).join(', ')}`);
-  }
-
-  // Get headings
-  const h1s = html.match(/<h1[^>]*>([^<]*)<\/h1>/g) || [];
-  const h2s = html.match(/<h2[^>]*>([^<]*)<\/h2>/g) || [];
-  if (h1s.length > 0 || h2s.length > 0) {
-    context.push(`Headings: ${[...h1s, ...h2s].slice(0, 5).join(', ')}`);
-  }
-
-  // Get links
-  const links = html.match(/<a[^>]*>([^<]*)<\/a>/g) || [];
-  if (links.length > 0) {
-    context.push(`Links: ${links.slice(0, 5).join(', ')}`);
-  }
-
-  return context.join('\n');
-}
-
-// ============================================
-// HELPER: Escape regex special characters
-// ============================================
-
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-// ============================================
-// APPLY HTML EDITS using DOM
-// ============================================
-
-function applyHTMLEdits(html: string, edits: HTMLEdit[]): { html: string; applied: CodeChange[] } {
-  const { document } = parseHTML(html);
-  const applied: CodeChange[] = [];
-
-  for (const edit of edits) {
-    try {
-      const elements = document.querySelectorAll(edit.selector);
-
-      if (elements.length === 0) {
-        console.warn(`[Edit Website] No elements found for selector: ${edit.selector}`);
-        continue;
-      }
-
-      for (const el of elements) {
-        const beforeState = el.outerHTML?.substring(0, 50) || '';
-
-        switch (edit.action) {
-          case 'style':
-            if (edit.property) {
-              (el as any).style[edit.property] = edit.value;
-            }
-            break;
-          case 'text':
-            el.textContent = edit.value;
-            break;
-          case 'attribute':
-            if (edit.property) {
-              el.setAttribute(edit.property, edit.value);
-            }
-            break;
-          case 'addClass':
-            el.classList.add(edit.value);
-            break;
-          case 'removeClass':
-            el.classList.remove(edit.value);
-            break;
-        }
-
-        const afterState = el.outerHTML?.substring(0, 50) || '';
-
-        applied.push({
-          file: '/index.html',
-          description: edit.description || `${edit.action} on ${edit.selector}`,
-          before: beforeState,
-          after: afterState,
-        });
-      }
-
-      console.log(`[Edit Website] ✓ Applied ${edit.action} to ${elements.length} element(s): ${edit.selector}`);
-    } catch (err) {
-      console.error(`[Edit Website] Error applying edit to ${edit.selector}:`, err);
-    }
-  }
-
-  return { html: document.toString(), applied };
-}
-
-// ============================================
-// APPLY CSS EDITS
-// ============================================
-
-function applyCSSEdits(css: string, edits: CSSEdit[]): { css: string; applied: CodeChange[] } {
-  let result = css;
-  const applied: CodeChange[] = [];
-
-  for (const edit of edits) {
-    try {
-      const escapedSelector = escapeRegex(edit.selector);
-      const selectorRegex = new RegExp(
-        `(${escapedSelector}\\s*\\{[^}]*)\\}`,
-        'g'
-      );
-
-      const beforeCSS = result.substring(0, 100);
-
-      if (result.match(selectorRegex)) {
-        // Selector exists - add/update property
-        result = result.replace(selectorRegex, (match, block) => {
-          const propRegex = new RegExp(`${escapeRegex(edit.property)}\\s*:[^;]+;?`, 'g');
-          if (block.match(propRegex)) {
-            // Property exists - update it
-            return block.replace(propRegex, `${edit.property}: ${edit.value};`) + '}';
-          } else {
-            // Add new property before closing brace
-            return block.trimEnd() + `\n  ${edit.property}: ${edit.value};\n}`;
-          }
-        });
-      } else {
-        // Selector doesn't exist - add new rule at the end
-        result += `\n\n${edit.selector} {\n  ${edit.property}: ${edit.value};\n}`;
-      }
-
-      applied.push({
-        file: '/styles.css',
-        description: edit.description || `Set ${edit.property} on ${edit.selector}`,
-        before: beforeCSS,
-        after: result.substring(0, 100),
-      });
-
-      console.log(`[Edit Website] ✓ Applied CSS: ${edit.selector} { ${edit.property}: ${edit.value} }`);
-    } catch (err) {
-      console.error(`[Edit Website] Error applying CSS edit:`, err);
-    }
-  }
-
-  return { css: result, applied };
-}
-
-// ============================================
-// TOOL IMPLEMENTATION - DOM-BASED EDITING
-// ============================================
-
-// Image context for vision-based edits
-interface ImageContext {
-  referenceImages: Array<{ url: string; filename: string; purpose: string; mimeType: string }>;
-  contentImages: Array<{ url: string; filename: string; purpose: string; mimeType: string }>;
-}
 
 export async function editWebsiteFiles(params: z.infer<typeof editWebsiteSchema> & {
   projectId: string;
   onProgress?: ProgressCallback;
   imageContext?: ImageContext;
   modelId?: string;
+  leadId?: string; // Optional lead ID for lead website editing
 }) {
-  const { editInstructions, targetPage = '/index.html', projectId, onProgress, imageContext, modelId } = params;
+  const { editInstructions, targetPage = '/index.html', projectId, onProgress, imageContext, modelId, leadId } = params;
 
   try {
-    console.log('[Edit Website] 🔧 Starting DOM-based website edit...');
+    console.log('[Edit Website] ========================================');
+    console.log('[Edit Website] STARTING EDIT');
     console.log('[Edit Website] Instructions:', editInstructions);
     console.log('[Edit Website] Target page:', targetPage);
+    console.log('[Edit Website] Project ID:', projectId);
+    console.log('[Edit Website] Lead ID:', leadId || 'none (main website)');
+    console.log('[Edit Website] ========================================');
 
-    // Stage 1: Fetching current files
-    await onProgress?.({ type: 'stage', stage: 'fetch', message: 'Loading website...' });
+    // Stage 1: Load current website
+    await onProgress?.({ type: 'stage', stage: 'fetch', message: 'Loading current website...' });
 
-    // 1. Fetch current website artifact from Supabase
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     );
-    const { data: artifact, error: fetchError } = await (supabase
-      .from('artifacts') as any)
-      .select('*')
-      .eq('project_id', projectId)
-      .eq('type', 'website_code')
-      .single();
 
-    if (fetchError || !artifact) {
-      console.error('[Edit Website] No existing website found:', fetchError);
-      throw new Error('No website found to edit. Generate a website first.');
+    let currentWebsite: WebsiteArtifact;
+    let artifact: any;
+    let isLeadWebsite = false;
+    let leadWebsiteData: any = null;
+
+    // If leadId is provided, fetch from lead_website artifact
+    if (leadId) {
+      const { data: leadArtifact, error: leadFetchError } = await (supabase
+        .from('artifacts') as any)
+        .select('*')
+        .eq('project_id', projectId)
+        .eq('type', 'lead_website')
+        .single();
+
+      if (leadFetchError || !leadArtifact) {
+        throw new Error('No lead website found to edit. Generate a website for this lead first.');
+      }
+
+      // Find the specific lead's website in the websites array
+      const leadWebsite = leadArtifact.data?.websites?.find((w: any) => w.leadId === leadId);
+      if (!leadWebsite) {
+        throw new Error(`No website found for lead ${leadId}. Generate a website first.`);
+      }
+
+      artifact = leadArtifact;
+      leadWebsiteData = leadWebsite;
+      isLeadWebsite = true;
+      currentWebsite = { files: leadWebsite.files, primaryPage: '/index.html' };
+      console.log('[Edit Website] Found lead website with', leadWebsite.files?.length, 'files');
+    } else {
+      // Standard website_code fetch
+      const { data: codeArtifact, error: fetchError } = await (supabase
+        .from('artifacts') as any)
+        .select('*')
+        .eq('project_id', projectId)
+        .eq('type', 'website_code')
+        .single();
+
+      if (fetchError || !codeArtifact) {
+        throw new Error('No website found to edit. Generate a website first.');
+      }
+
+      artifact = codeArtifact;
+      currentWebsite = codeArtifact.data as WebsiteArtifact;
     }
 
-    const currentWebsite = artifact.data as WebsiteArtifact;
-
-    // Find the target HTML file (default to /index.html)
+    // Find the target HTML file
     const normalizedTarget = targetPage.startsWith('/') ? targetPage : `/${targetPage}`;
     const htmlFile = currentWebsite.files.find(f => f.path === normalizedTarget)
       || currentWebsite.files.find(f => f.path === '/index.html');
-    const cssFile = currentWebsite.files.find(f => f.path === '/styles.css');
 
     if (!htmlFile) {
       throw new Error(`Page ${normalizedTarget} not found`);
     }
 
-    const actualTargetPage = htmlFile.path;
-    console.log('[Edit Website] Editing page:', actualTargetPage);
+    const currentHTML = htmlFile.content;
+    console.log('[Edit Website] Current HTML length:', currentHTML.length);
 
-    // Stage 2: Generate changes
-    await onProgress?.({ type: 'stage', stage: 'analyze', message: 'Planning changes...' });
+    // Stage 2: Generate edited HTML
+    console.log('[Edit Website] Stage 2: Calling AI to apply changes...');
 
-    // 2. Initialize OpenRouter client
+    // Use the model from the picker, fallback to Gemini Flash
+    const selectedModel = modelId || 'google/gemini-2.0-flash-001';
+    console.log('[Edit Website] Using model:', selectedModel);
+
+    await onProgress?.({ type: 'stage', stage: 'generate', message: `Applying changes with ${selectedModel.split('/').pop()}...` });
+
     const openrouter = createOpenRouter({
       apiKey: process.env.OPENROUTER_API_KEY!,
     });
 
-    // Use the user's selected model, or default to Claude 3.5 Sonnet
-    const hasContentImages = imageContext?.contentImages && imageContext.contentImages.length > 0;
-    const hasReferenceImages = imageContext?.referenceImages && imageContext.referenceImages.length > 0;
-    const selectedModel = modelId || 'anthropic/claude-3.5-sonnet';
-    const modelDisplayName = selectedModel.split('/').pop() || selectedModel;
-
-    // Show model being used in chat
-    await onProgress?.({ type: 'stage', stage: 'model', message: `Using ${modelDisplayName}...` });
-
-    console.log('[Edit Website] Using model:', selectedModel);
-    if (hasContentImages) console.log('[Edit Website] Content images to embed:', imageContext!.contentImages.length);
-    if (hasReferenceImages) console.log('[Edit Website] Reference images:', imageContext!.referenceImages.length);
-
-    // Build image context instructions if images provided
-    let imageInstructions = '';
+    // Build image instructions if provided
+    let imageSection = '';
     if (imageContext?.contentImages && imageContext.contentImages.length > 0) {
-      imageInstructions += `
-
-═══════════════════════════════════════════════════════════════════
-USER UPLOADED IMAGES - YOU MUST USE THESE
-═══════════════════════════════════════════════════════════════════
-
-The user uploaded ${imageContext.contentImages.length} image(s) to add to their website.
-Use these EXACT URLs:
-
-${imageContext.contentImages.map((img, i) => `IMAGE ${i + 1}: ${img.url}`).join('\n')}
-
-HOW TO ADD IMAGES:
-
-1. As BACKGROUND IMAGE (for hero, sections, etc.):
-   {"cssEdits": [{"selector": ".hero, section:first-of-type", "property": "background-image", "value": "url('${imageContext.contentImages[0].url}')", "description": "Add background image"}]}
-   Also add: {"cssEdits": [{"selector": ".hero", "property": "background-size", "value": "cover", "description": "Cover background"}]}
-   Also add: {"cssEdits": [{"selector": ".hero", "property": "background-position", "value": "center", "description": "Center background"}]}
-
-2. As IMG TAG (for content areas):
-   {"htmlEdits": [{"selector": ".hero img, .featured img", "action": "attribute", "property": "src", "value": "${imageContext.contentImages[0].url}", "description": "Set image source"}]}
-
-IMPORTANT: The user said "${editInstructions}" - use the image URL above to fulfill this request!
+      imageSection = `
+IMAGES TO ADD (use these exact URLs):
+${imageContext.contentImages.map((img, i) => `- Image ${i + 1}: ${img.url}`).join('\n')}
 `;
     }
 
-    if (hasReferenceImages) {
-      imageInstructions += `\n\nDESIGN REFERENCE:\nThe user has provided ${imageContext!.referenceImages.length} reference image(s) showing their desired style.
-Analyze these images and match their:
-- Color scheme (extract dominant colors)
-- Typography style
-- Spacing and layout feel
-- Overall aesthetic`;
-    }
+    // Build page list for internal linking context
+    const htmlPages = currentWebsite.files
+      .filter(f => f.path.endsWith('.html'))
+      .map(f => {
+        // Convert path to display: /about/index.html → /about
+        let displayPath = f.path;
+        if (displayPath === '/index.html') displayPath = '/';
+        else if (displayPath.endsWith('/index.html')) displayPath = displayPath.replace('/index.html', '');
+        else displayPath = displayPath.replace('.html', '');
+        return displayPath;
+      });
 
-    // 3. Build the DOM-BASED prompt
-    const prompt = `You are making targeted edits to a website using CSS selectors.${imageInstructions}
+    const pageListSection = htmlPages.length > 1 ? `
+AVAILABLE PAGES IN THIS WEBSITE:
+${htmlPages.map(p => `- ${p}`).join('\n')}
+
+INTERNAL LINKING - When the user asks to link to another page:
+- Link to home: href="/"
+- Link to about: href="/about"
+- Link to services: href="/services"
+- Link to contact: href="/contact"
+Use the paths listed above. Never use full URLs for internal links.
+` : '';
+
+    // FAST PATH: For simple edits (font, color, text), use diff-based approach
+    // This is 10x faster than regenerating the entire HTML
+    const isSimpleEdit = /^(change|update|make|set|use|switch)\s+(the\s+)?(font|color|text|heading|title|button|background|padding|margin|size)/i.test(editInstructions);
+
+    let newHTML: string = '';
+
+    if (isSimpleEdit) {
+      // DIFF-BASED EDITING: Only return the changes
+      console.log('[Edit Website] Using FAST diff-based editing');
+      await onProgress?.({ type: 'stage', stage: 'analyze', message: 'Analyzing changes needed...' });
+
+      const diffPrompt = `You are making a SURGICAL edit to HTML. Return ONLY the find/replace operations needed.
 
 USER REQUEST: "${editInstructions}"
+${imageSection}
+CURRENT HTML (excerpt - first 2000 chars for context):
+\`\`\`html
+${currentHTML.slice(0, 2000)}${currentHTML.length > 2000 ? '\n... [truncated]' : ''}
+\`\`\`
 
-WEBSITE STRUCTURE:
-${extractHTMLContext(htmlFile.content)}
+Return a JSON array of find/replace operations. Each operation has:
+- "find": exact string to find (be precise - include surrounding context to ensure uniqueness)
+- "replace": what to replace it with
 
-Return ONLY a JSON object (no markdown, no explanation) with edits to make:
+For font changes, target the font-family in <style> or inline styles.
+For color changes, target the color/background-color values.
+For text changes, target the exact text content.
 
-{
-  "htmlEdits": [
-    {
-      "selector": "CSS selector to target element(s)",
-      "action": "style | text | attribute | addClass | removeClass",
-      "property": "for style: CSS property name, for attribute: attribute name",
-      "value": "new value",
-      "description": "brief description"
-    }
-  ],
-  "cssEdits": [
-    {
-      "selector": "CSS selector (e.g., button, .class, #id)",
-      "property": "CSS property",
-      "value": "new value",
-      "description": "brief description"
-    }
-  ]
-}
+Example response for "change font to Poppins":
+[{"find": "font-family: Inter", "replace": "font-family: 'Poppins'"},{"find": "font-family: 'Inter'", "replace": "font-family: 'Poppins'"}]
 
-COMMON PATTERNS:
-- Round buttons: {"htmlEdits": [{"selector": "button, .btn, a.button, [type='submit']", "action": "style", "property": "borderRadius", "value": "9999px", "description": "Round all buttons"}]}
-- Bigger text: {"htmlEdits": [{"selector": "h1", "action": "style", "property": "fontSize", "value": "4rem", "description": "Increase heading size"}]}
-- Change text: {"htmlEdits": [{"selector": ".hero h1, h1", "action": "text", "value": "New Headline", "description": "Update heading text"}]}
-- Darker background: {"cssEdits": [{"selector": "body", "property": "background-color", "value": "#1a1a2e", "description": "Darken background"}]}
-- Button color: {"cssEdits": [{"selector": "button, .btn", "property": "background-color", "value": "#3b82f6", "description": "Change button color"}]}
-- More padding: {"htmlEdits": [{"selector": ".hero, section", "action": "style", "property": "padding", "value": "80px 20px", "description": "Increase section padding"}]}
+Example response for "change the heading to Hello World":
+[{"find": ">Welcome to Our Site<", "replace": ">Hello World<"}]
 
-RULES:
-1. Use broad selectors to catch all matching elements (e.g., "button, .btn, a.button")
-2. For style changes, use camelCase property names (borderRadius, not border-radius)
-3. For CSS edits, use kebab-case (background-color)
-4. Return 1-5 edits maximum
-5. Return ONLY valid JSON, nothing else
+Return ONLY the JSON array, no explanation.`;
 
-JSON:`;
+      const diffResult = await generateText({
+        model: openrouter('google/gemini-2.0-flash-001'), // Always use fast model for diffs
+        prompt: diffPrompt,
+        temperature: 0,
+        maxOutputTokens: 2000,
+      });
 
-    // 4. Get AI response
-    await onProgress?.({ type: 'stage', stage: 'generate', message: 'Generating changes...' });
+      let operations: Array<{find: string; replace: string}> = [];
+      try {
+        const jsonText = diffResult.text.trim().replace(/^```json?\s*/, '').replace(/\s*```$/, '');
+        operations = JSON.parse(jsonText);
+      } catch (e) {
+        console.log('[Edit Website] Failed to parse diff response, falling back to full edit');
+        // Fall through to full edit below
+      }
 
-    let text: string;
-
-    try {
-      if (hasReferenceImages) {
-        // Build multimodal message with images for vision model
-        type MessageContent =
-          | { type: 'text'; text: string }
-          | { type: 'image'; image: string; mimeType: string };
-
-        const messageContent: MessageContent[] = [];
-
-        // Add reference images (fetch and convert to base64)
-        for (const img of imageContext!.referenceImages) {
-          try {
-            const response = await fetch(img.url);
-            const buffer = await response.arrayBuffer();
-            const base64 = Buffer.from(buffer).toString('base64');
-            messageContent.push({
-              type: 'image',
-              image: base64,
-              mimeType: img.mimeType || 'image/jpeg',
-            });
-          } catch (err) {
-            console.error('[Edit Website] Failed to fetch reference image:', img.url, err);
+      if (operations.length > 0) {
+        newHTML = currentHTML;
+        let appliedCount = 0;
+        for (const op of operations) {
+          if (newHTML.includes(op.find)) {
+            newHTML = newHTML.split(op.find).join(op.replace);
+            appliedCount++;
           }
         }
 
-        // Add text prompt
-        messageContent.push({ type: 'text', text: prompt });
-
-        const result = await generateText({
-          model: openrouter(selectedModel),
-          messages: [{ role: 'user', content: messageContent }],
-          temperature: 0.1,
-          maxOutputTokens: 1000,
-        });
-        text = result.text;
-      } else {
-        // Standard text-only call
-        const result = await generateText({
-          model: openrouter(selectedModel),
-          prompt,
-          temperature: 0.1,
-          maxOutputTokens: 1000,
-        });
-        text = result.text;
-      }
-    } catch (apiError) {
-      console.error('[Edit Website] API call failed:', apiError);
-      const errorMessage = apiError instanceof Error ? apiError.message : 'Unknown error';
-      throw new Error(`AI API error: ${errorMessage}. Try selecting a different model.`);
-    }
-
-    // Validate we got a response
-    if (!text || text.trim() === '') {
-      console.error('[Edit Website] Empty response from model:', selectedModel);
-      const modelName = selectedModel.split('/').pop() || selectedModel;
-      throw new Error(`Model "${modelName}" returned empty response. Please try again or select a different model.`);
-    }
-
-    console.log('[Edit Website] AI response:', text.substring(0, 300));
-
-    // Stage 3: Apply changes
-    await onProgress?.({ type: 'stage', stage: 'apply', message: 'Applying changes...' });
-
-    // 5. Parse the response
-    let editResponse: EditResponse = { htmlEdits: [], cssEdits: [] };
-    try {
-      let jsonString = text.trim();
-
-      // Remove markdown code blocks if present
-      const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-      if (jsonMatch) {
-        jsonString = jsonMatch[1];
-      } else {
-        // Find JSON object directly
-        const objMatch = text.match(/\{[\s\S]*\}/);
-        if (objMatch) {
-          jsonString = objMatch[0];
+        if (appliedCount > 0) {
+          console.log('[Edit Website] Applied', appliedCount, 'diff operations');
+        } else {
+          // None of the finds matched - fall back to full edit
+          console.log('[Edit Website] No diff operations matched, falling back to full edit');
+          operations = []; // Clear to trigger fallback
         }
       }
 
-      editResponse = JSON.parse(jsonString.trim());
-    } catch (parseError) {
-      console.error('[Edit Website] Failed to parse response:', parseError);
-      console.error('[Edit Website] Raw text:', text);
-      throw new Error('Failed to parse AI response. Try rephrasing your edit request.');
+      // If diff approach failed, fall through to full edit
+      if (operations.length === 0) {
+        newHTML = ''; // Will trigger fallback below
+      }
+    } else {
+      newHTML = ''; // Trigger full edit
     }
 
-    const htmlEdits = editResponse.htmlEdits || [];
-    const cssEdits = editResponse.cssEdits || [];
+    // FULL EDIT: For complex changes or if diff failed
+    if (!newHTML || newHTML === currentHTML) {
+      console.log('[Edit Website] Using full HTML regeneration');
 
-    if (htmlEdits.length === 0 && cssEdits.length === 0) {
-      throw new Error('No changes detected. Try being more specific about what to change.');
-    }
+      const prompt = `You are editing a website's HTML. Make ONLY the changes the user requested.
 
-    const totalEdits = htmlEdits.length + cssEdits.length;
-    await onProgress?.({ type: 'stage', stage: 'edits', message: `Applying ${totalEdits} change${totalEdits !== 1 ? 's' : ''}...` });
+USER REQUEST: "${editInstructions}"
+${imageSection}${pageListSection}
+CURRENT HTML:
+\`\`\`html
+${currentHTML}
+\`\`\`
 
-    console.log(`[Edit Website] Applying ${htmlEdits.length} HTML edits and ${cssEdits.length} CSS edits`);
+INSTRUCTIONS:
+1. Follow the user's request EXACTLY - their creative vision takes priority
+2. You have FULL permission to:
+   - Add new sections anywhere in the page
+   - Remove existing sections if requested
+   - Reorganize or reorder sections
+   - Completely restructure the page if asked
+   - Change layouts, styles, and content freely
+   - Add or modify navigation links between pages
+3. If the user asks for structural changes, DO THEM
+4. Return the COMPLETE modified HTML
 
-    // 6. Apply edits
-    const allChanges: CodeChange[] = [];
-    const updatedFiles = [...currentWebsite.files];
+The user's prompt IS the specification. Do exactly what they ask.
 
-    // Apply HTML edits to target page
-    if (htmlEdits.length > 0) {
-      const htmlIndex = updatedFiles.findIndex(f => f.path === actualTargetPage);
-      if (htmlIndex !== -1) {
-        const pageName = actualTargetPage.split('/').pop() || 'page';
-        // Emit progress: editing this file
-        await onProgress?.({ type: 'stage', stage: 'edit_html', message: `Editing ${pageName}...` });
+Return ONLY the modified HTML code, nothing else. No markdown, no explanation, just the HTML.`;
 
-        const { html: newHtml, applied } = applyHTMLEdits(updatedFiles[htmlIndex].content, htmlEdits);
-        updatedFiles[htmlIndex].content = newHtml;
-        // Update file paths in applied changes to reflect actual target
-        allChanges.push(...applied.map(c => ({ ...c, file: actualTargetPage })));
+      const result = await generateText({
+        model: openrouter(selectedModel),
+        prompt,
+        temperature: 0.1,
+        maxOutputTokens: 32000,
+      });
 
-        // Emit progress: file edited
-        await onProgress?.({ type: 'stage', stage: 'done_html', message: `Edited ${pageName}` });
+      newHTML = result.text.trim();
 
-        for (const change of applied) {
-          await onProgress?.({
-            type: 'change',
-            file: change.file,
-            description: change.description,
-            before: change.before,
-            after: change.after,
-          });
+      // Clean up if AI wrapped in markdown
+      if (newHTML.startsWith('```')) {
+        const match = newHTML.match(/```(?:html)?\s*([\s\S]*?)\s*```/);
+        if (match) {
+          newHTML = match[1].trim();
         }
       }
     }
 
-    // Apply CSS edits
-    if (cssEdits.length > 0 && cssFile) {
-      const cssIndex = updatedFiles.findIndex(f => f.path === '/styles.css');
-      if (cssIndex !== -1) {
-        // Emit progress: editing this file
-        await onProgress?.({ type: 'stage', stage: 'edit_css', message: 'Editing styles.css...' });
-
-        const { css: newCss, applied } = applyCSSEdits(updatedFiles[cssIndex].content, cssEdits);
-        updatedFiles[cssIndex].content = newCss;
-        allChanges.push(...applied);
-
-        // Emit progress: file edited
-        await onProgress?.({ type: 'stage', stage: 'done_css', message: 'Edited styles.css' });
-
-        for (const change of applied) {
-          await onProgress?.({
-            type: 'change',
-            file: change.file,
-            description: change.description,
-            before: change.before,
-            after: change.after,
-          });
-        }
-      }
+    // Validate we got actual HTML back
+    if (!newHTML.includes('<') || newHTML.length < 100) {
+      throw new Error('AI did not return valid HTML. Please try again.');
     }
 
-    if (allChanges.length === 0) {
-      throw new Error('Could not apply any changes. The selectors may not match any elements.');
+    console.log('[Edit Website] New HTML length:', newHTML.length);
+
+    // Stage 3: Save
+    console.log('[Edit Website] Stage 3: Saving to database...');
+    await onProgress?.({ type: 'stage', stage: 'save', message: 'Saving changes...' });
+
+    // Update the file content
+    const updatedFiles = currentWebsite.files.map(f =>
+      f.path === htmlFile.path ? { ...f, content: newHTML } : f
+    );
+
+    const newVersion = (artifact.version || 1) + 1;
+    console.log('[Edit Website] Saving to DB with version:', newVersion);
+
+    let saveError: any = null;
+    let updatedRows: any[] = [];
+
+    if (isLeadWebsite && leadId) {
+      // Save to lead_website artifact
+      const updatedLeadWebsite = {
+        ...leadWebsiteData,
+        files: updatedFiles,
+      };
+
+      // Replace this lead's website in the websites array
+      const updatedWebsites = artifact.data.websites.map((w: any) =>
+        w.leadId === leadId ? updatedLeadWebsite : w
+      );
+
+      const { data, error } = await (supabase
+        .from('artifacts') as any)
+        .update({
+          data: { websites: updatedWebsites },
+          version: newVersion,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('project_id', projectId)
+        .eq('type', 'lead_website')
+        .select();
+
+      saveError = error;
+      updatedRows = data || [];
+      console.log('[Edit Website] Saved lead website for lead:', leadId);
+    } else {
+      // Standard website_code save
+      const updatedWebsite: WebsiteArtifact = {
+        ...currentWebsite,
+        files: updatedFiles,
+      };
+
+      const { data, error } = await (supabase
+        .from('artifacts') as any)
+        .update({
+          data: updatedWebsite,
+          version: newVersion,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('project_id', projectId)
+        .eq('type', 'website_code')
+        .select();
+
+      saveError = error;
+      updatedRows = data || [];
     }
 
-    // Stage 4: Save
-    await onProgress?.({ type: 'stage', stage: 'save', message: 'Saving...' });
-
-    // 7. Save updated artifact (preserve existing metadata)
-    const updatedWebsite: WebsiteArtifact = {
-      ...currentWebsite,
-      files: updatedFiles,
-    };
-
-    // Save previous state for undo capability
-    const { error: saveError } = await (supabase
-      .from('artifacts') as any)
-      .update({
-        data: updatedWebsite,
-        previous_data: currentWebsite, // Store previous version for undo
-        version: (artifact.version || 1) + 1,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('project_id', projectId)
-      .eq('type', 'website_code');
+    console.log('[Edit Website] Supabase response - error:', saveError, 'rows:', updatedRows?.length);
 
     if (saveError) {
-      console.error('[Edit Website] Failed to save:', saveError);
+      console.error('[Edit Website] Save error:', saveError);
       throw new Error('Failed to save website updates');
     }
 
-    console.log(`[Edit Website] ✅ Done! Applied ${allChanges.length} changes`);
+    if (!updatedRows || updatedRows.length === 0) {
+      console.error('[Edit Website] NO ROWS UPDATED! This means the .eq() filters did not match any artifact.');
+      throw new Error('No artifact found to update - check project_id and type');
+    }
+
+    console.log('[Edit Website] Successfully saved! New version in DB:', updatedRows[0]?.version);
+    console.log('[Edit Website] ========================================');
+    console.log('[Edit Website] EDIT COMPLETE');
+    console.log('[Edit Website] Saved version:', newVersion);
+    console.log('[Edit Website] HTML length changed:', currentHTML.length, '->', newHTML.length);
+    console.log('[Edit Website] Is lead website:', isLeadWebsite);
+    console.log('[Edit Website] ========================================');
+
+    await onProgress?.({
+      type: 'change',
+      file: htmlFile.path,
+      description: `✓ ${editInstructions}`,
+    });
 
     return {
       success: true,
-      changesApplied: allChanges.length,
-      changes: allChanges,
-      summary: `✏️ Made ${allChanges.length} change${allChanges.length > 1 ? 's' : ''}: ${allChanges.map(c => c.description).join(', ')}`,
+      changesApplied: 1,
+      changes: [{
+        file: htmlFile.path,
+        description: editInstructions,
+      }],
+      summary: `Successfully updated ${htmlFile.path}`,
     };
+
   } catch (error) {
     console.error('[Edit Website] Error:', error);
     return {

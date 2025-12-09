@@ -63,6 +63,7 @@ export const addPageSchema = z.object({
   pagePath: z.string().describe('Path for new page, e.g., "/about" or "/services" or "/contact"'),
   pageTitle: z.string().describe('Title for the new page'),
   pageDescription: z.string().describe('Description of what content the page should have'),
+  leadId: z.string().optional().describe('Optional lead ID - if provided, adds page to lead website instead of agency website'),
 });
 
 // ============================================
@@ -546,14 +547,16 @@ ${scriptTags}
 // ============================================
 
 export async function addWebsitePage(params: z.infer<typeof addPageSchema> & { projectId: string; onProgress?: ProgressCallback }) {
-  const { pagePath, pageTitle, pageDescription, projectId, onProgress } = params;
+  const { pagePath, pageTitle, pageDescription, projectId, leadId, onProgress } = params;
 
   try {
     console.log('[Add Page] Starting enhanced page creation...');
-    console.log('[Add Page] Path:', pagePath, 'Title:', pageTitle);
+    console.log('[Add Page] Path:', pagePath, 'Title:', pageTitle, 'LeadId:', leadId || 'none');
+
+    const isLeadWebsite = !!leadId;
 
     // Stage 1: Loading website and context
-    await onProgress?.({ type: 'stage', stage: 'fetch', message: 'Loading website...' });
+    await onProgress?.({ type: 'stage', stage: 'fetch', message: isLeadWebsite ? 'Loading lead website...' : 'Loading website...' });
 
     // Initialize Supabase client
     const supabase = createClient(
@@ -561,34 +564,79 @@ export async function addWebsitePage(params: z.infer<typeof addPageSchema> & { p
       process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     );
 
-    // Fetch all required artifacts in parallel
-    const [websiteResult, brandResult, planResult] = await Promise.all([
-      // Website artifact
-      (supabase.from('artifacts') as any)
+    // Variables to hold website data
+    let currentWebsite: WebsiteArtifact;
+    let websiteArtifactVersion: number = 1;
+    let leadWebsiteArtifact: any = null;
+    let leadWebsiteIndex: number = -1;
+
+    if (isLeadWebsite) {
+      // Fetch lead_website artifact
+      const { data: leadArtifact, error: leadError } = await (supabase
+        .from('artifacts') as any)
         .select('*')
         .eq('project_id', projectId)
-        .eq('type', 'website_code')
-        .single(),
-      // Brand identity artifact
-      (supabase.from('artifacts') as any)
-        .select('data')
-        .eq('project_id', projectId)
-        .eq('type', 'identity')
-        .single(),
-      // Business plan artifact
-      (supabase.from('artifacts') as any)
-        .select('data')
-        .eq('project_id', projectId)
-        .eq('type', 'business_plan')
-        .single(),
-    ]);
+        .eq('type', 'lead_website')
+        .single();
 
-    if (websiteResult.error || !websiteResult.data) {
-      console.error('[Add Page] No existing website found:', websiteResult.error);
-      throw new Error('No website found. Generate a website first.');
+      if (leadError || !leadArtifact?.data?.websites) {
+        console.error('[Add Page] No lead website artifact found:', leadError);
+        throw new Error('No lead website found. Generate a website for this lead first.');
+      }
+
+      // Find the specific lead's website
+      const leadWebsiteData = leadArtifact.data.websites.find((w: any, idx: number) => {
+        if (w.leadId === leadId) {
+          leadWebsiteIndex = idx;
+          return true;
+        }
+        return false;
+      });
+
+      if (!leadWebsiteData || !leadWebsiteData.files) {
+        throw new Error('No website found for this lead. Generate a website first.');
+      }
+
+      leadWebsiteArtifact = leadArtifact;
+      websiteArtifactVersion = leadArtifact.version || 1;
+
+      // Convert lead website files to WebsiteArtifact format
+      currentWebsite = {
+        files: leadWebsiteData.files,
+        framework: 'html',
+        primaryPage: '/index.html',
+      } as WebsiteArtifact;
+
+      console.log('[Add Page] Found lead website with', leadWebsiteData.files.length, 'files');
+    } else {
+      // Fetch agency website artifact
+      const [websiteResult, brandResult, planResult] = await Promise.all([
+        (supabase.from('artifacts') as any)
+          .select('*')
+          .eq('project_id', projectId)
+          .eq('type', 'website_code')
+          .single(),
+        (supabase.from('artifacts') as any)
+          .select('data')
+          .eq('project_id', projectId)
+          .eq('type', 'identity')
+          .single(),
+        (supabase.from('artifacts') as any)
+          .select('data')
+          .eq('project_id', projectId)
+          .eq('type', 'business_plan')
+          .single(),
+      ]);
+
+      if (websiteResult.error || !websiteResult.data) {
+        console.error('[Add Page] No existing website found:', websiteResult.error);
+        throw new Error('No website found. Generate a website first.');
+      }
+
+      currentWebsite = websiteResult.data.data as WebsiteArtifact;
+      websiteArtifactVersion = websiteResult.data.version || 1;
     }
 
-    const currentWebsite = websiteResult.data.data as WebsiteArtifact;
     const htmlFile = currentWebsite.files.find(f => f.path === '/index.html');
     const cssFile = currentWebsite.files.find(f => f.path === '/styles.css');
 
@@ -597,9 +645,48 @@ export async function addWebsitePage(params: z.infer<typeof addPageSchema> & { p
     }
 
     // Build business context from available artifacts
-    const brandIdentity = brandResult.data?.data as IdentityArtifact | null;
-    const businessPlan = planResult.data?.data as BusinessPlanArtifact | null;
-    const businessContext = buildBusinessContext(brandIdentity, businessPlan);
+    let businessContext: BusinessContext;
+
+    if (isLeadWebsite) {
+      // For lead websites, fetch leads artifact to get lead info
+      const { data: leadsArtifact } = await (supabase
+        .from('artifacts') as any)
+        .select('data')
+        .eq('project_id', projectId)
+        .eq('type', 'leads')
+        .single();
+
+      const lead = leadsArtifact?.data?.leads?.find((l: any) => l.id === leadId);
+
+      businessContext = {
+        businessName: lead?.companyName || 'Business',
+        tagline: lead?.industry || '',
+        colors: { primary: '#3B82F6', secondary: '#1E40AF', accent: '#F59E0B' },
+        services: [],
+        contactInfo: {
+          email: lead?.contactEmail,
+          phone: lead?.contactPhone,
+        },
+      };
+    } else {
+      // For agency website, fetch brand and plan artifacts
+      const [brandResult, planResult] = await Promise.all([
+        (supabase.from('artifacts') as any)
+          .select('data')
+          .eq('project_id', projectId)
+          .eq('type', 'identity')
+          .single(),
+        (supabase.from('artifacts') as any)
+          .select('data')
+          .eq('project_id', projectId)
+          .eq('type', 'business_plan')
+          .single(),
+      ]);
+
+      const brandIdentity = brandResult.data?.data as IdentityArtifact | null;
+      const businessPlan = planResult.data?.data as BusinessPlanArtifact | null;
+      businessContext = buildBusinessContext(brandIdentity, businessPlan);
+    }
 
     console.log('[Add Page] Business context:', businessContext.businessName);
 
@@ -766,28 +853,54 @@ Return ONLY the main content HTML. No markdown, no explanation.`;
     // Stage 6: Saving
     await onProgress?.({ type: 'stage', stage: 'save', message: 'Saving website...' });
 
-    // Save updated artifact
-    const updatedWebsite: WebsiteArtifact = {
-      ...currentWebsite,
-      files: updatedFiles,
-    };
+    if (isLeadWebsite && leadWebsiteArtifact && leadWebsiteIndex >= 0) {
+      // Save to lead_website artifact
+      const updatedWebsites = [...leadWebsiteArtifact.data.websites];
+      updatedWebsites[leadWebsiteIndex] = {
+        ...updatedWebsites[leadWebsiteIndex],
+        files: updatedFiles,
+      };
 
-    const { error: saveError } = await (supabase
-      .from('artifacts') as any)
-      .update({
-        data: updatedWebsite,
-        version: (websiteResult.data.version || 1) + 1,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('project_id', projectId)
-      .eq('type', 'website_code');
+      const { error: saveError } = await (supabase
+        .from('artifacts') as any)
+        .update({
+          data: { websites: updatedWebsites },
+          version: websiteArtifactVersion + 1,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('project_id', projectId)
+        .eq('type', 'lead_website');
 
-    if (saveError) {
-      console.error('[Add Page] Failed to save:', saveError);
-      throw new Error('Failed to save website updates');
+      if (saveError) {
+        console.error('[Add Page] Failed to save lead website:', saveError);
+        throw new Error('Failed to save website updates');
+      }
+
+      console.log('[Add Page] Lead website page added successfully:', normalizedPath);
+    } else {
+      // Save to website_code artifact (agency website)
+      const updatedWebsite: WebsiteArtifact = {
+        ...currentWebsite,
+        files: updatedFiles,
+      };
+
+      const { error: saveError } = await (supabase
+        .from('artifacts') as any)
+        .update({
+          data: updatedWebsite,
+          version: websiteArtifactVersion + 1,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('project_id', projectId)
+        .eq('type', 'website_code');
+
+      if (saveError) {
+        console.error('[Add Page] Failed to save:', saveError);
+        throw new Error('Failed to save website updates');
+      }
+
+      console.log('[Add Page] Page added successfully:', normalizedPath);
     }
-
-    console.log('[Add Page] Page added successfully:', normalizedPath);
 
     return {
       success: true,

@@ -28,6 +28,11 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Failed to fetch artifact' }, { status: 500 });
     }
 
+    // Debug logging to trace version
+    if (artifact && type === 'website_code') {
+      console.log('[API artifacts/get] Returning website_code version:', artifact.version, 'files:', artifact.data?.files?.length);
+    }
+
     return NextResponse.json({ artifact: artifact || null });
   } catch (error) {
     console.error('[API] Unexpected error:', error);

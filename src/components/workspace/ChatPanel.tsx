@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import React from 'react';
-import { ArrowUp, Plus, Paperclip, ChevronDown, Pencil, MessageSquare, Lightbulb, MousePointer2, X, Check, Loader2 } from 'lucide-react';
+import { ArrowUp, Plus, Paperclip, ChevronDown, Pencil, MessageSquare, Lightbulb, MousePointer2, X, Check, Loader2, Square } from 'lucide-react';
 
 // ============================================
 // IMAGE UPLOAD TYPES
@@ -23,6 +23,7 @@ import { useProjectStore, type WorkspaceView } from '@/store/projectStore';
 import { TOOL_DISPLAY_NAMES } from '@/store/projectStore';
 import { WorkSection, type WorkItem, type ProgressStage } from './WorkSection';
 import { CodeChangeViewer, type CodeChange } from './CodeChangeViewer';
+import { WaveText } from '../ui/WaveText';
 
 // Curated top models with provider info (same as HeroInput)
 interface TopModel {
@@ -170,6 +171,9 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
     ? artifacts.leads?.leads.find(l => l.id === canvasState.leadId)
     : null;
 
+  // Track active lead for website generation (set via autoSubmitPrompt event)
+  const [activeLeadId, setActiveLeadId] = useState<string | null>(null);
+
   // Local model state using curated TOP_MODELS (same as HeroInput)
   const [selectedModel, setSelectedModel] = useState<TopModel>(() => {
     // Initialize from project's selected model or default
@@ -191,7 +195,7 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
   const abortControllerRef = useRef<AbortController | null>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const submissionLockRef = useRef(false);
-  const handleSendMessageRef = useRef<((messageText?: string) => Promise<void>) | undefined>(undefined);
+  const handleSendMessageRef = useRef<((messageText?: string, leadIdOverride?: string) => Promise<void>) | undefined>(undefined);
 
   // Image upload state
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
@@ -364,8 +368,13 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
   };
 
   // Handle message submission
-  const handleSendMessage = useCallback(async (messageText?: string) => {
+  // leadIdOverride allows passing leadId directly (avoids async state timing issues)
+  const handleSendMessage = useCallback(async (messageText?: string, leadIdOverride?: string) => {
     const rawText = messageText || input.trim();
+    // Use override if provided, otherwise fall back to state, then canvas state
+    const effectiveLeadId = leadIdOverride || activeLeadId || (
+      canvasState.type === 'lead-detail' ? canvasState.leadId : null
+    );
     // Prepend element selector context if an element is selected
     const textToSend = selectedElementSelector
       ? `[Targeting element: ${selectedElementSelector}] ${rawText}`
@@ -423,38 +432,18 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
     // Clear pending images after capturing them
     clearPendingImages();
 
-    // Create placeholder assistant message with initial analysis message
+    // Create placeholder assistant message - server will send real progress via [STATUS:...] markers
     const assistantMessageId = crypto.randomUUID();
     const assistantMessage = {
       id: assistantMessageId,
       project_id: project.id,
       role: 'assistant' as const,
-      content: '🔍 Analyzing your request...',
+      content: '🔄 Connecting...',
       created_at: new Date().toISOString(),
     };
     addMessage(assistantMessage);
 
-    // Cycle through analysis messages every 3 seconds while AI thinks
-    const analysisStages = [
-      '🔍 Analyzing your request...',
-      '🧠 Understanding your needs...',
-      '⚙️ Preparing tools...',
-      '🎯 Planning approach...',
-    ];
-    let stageIndex = 0;
-    let cycleIntervalId: NodeJS.Timeout | null = null;
-    cycleIntervalId = setInterval(() => {
-      stageIndex = (stageIndex + 1) % analysisStages.length;
-      updateMessage(assistantMessageId, analysisStages[stageIndex]);
-    }, 3000);
-
-    // Helper to clear the cycling interval
-    const clearCycleInterval = () => {
-      if (cycleIntervalId) {
-        clearInterval(cycleIntervalId);
-        cycleIntervalId = null;
-      }
-    };
+    // No fake cycling messages - server sends real [STATUS:...] markers that update the message
 
     try {
       // Create abort controller for this request
@@ -472,6 +461,7 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
           modelId: selectedModelId,
           assistantMessageId, // Pass assistant message ID for DB save
           chatMode, // Pass chat mode for prompt adjustment
+          leadId: effectiveLeadId, // Pass lead ID for lead website generation
         }),
         signal: abortControllerRef.current.signal,
       });
@@ -546,6 +536,21 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
           const { done, value } = await reader.read();
           if (done) {
             console.log('[ChatPanel] Stream complete');
+
+            // Mark all running work items as complete (fixes spinner never stopping)
+            setWorkItems(prev => {
+              const updated = { ...prev };
+              for (const key of Object.keys(updated)) {
+                if (updated[key].status === 'running') {
+                  updated[key] = {
+                    ...updated[key],
+                    status: 'complete',
+                  };
+                }
+              }
+              return updated;
+            });
+
             // Clear all running tools
             Object.values(toolNameToType).forEach(toolType => {
               setToolRunning(toolType, false);
@@ -591,7 +596,7 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
                   }
 
                   console.log(`[ChatPanel] Waiting for artifact... attempt ${attempt + 1}/6`);
-                  await new Promise(resolve => setTimeout(resolve, 300));
+                  await new Promise(resolve => setTimeout(resolve, 100));
                 }
 
                 // After ~2 seconds, transition anyway (with whatever state exists)
@@ -611,6 +616,11 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
 
           const chunk = decoder.decode(value, { stream: true });
 
+          // Debug: Log chunks that contain markers (uncomment for debugging)
+          if (chunk.includes('[WORK') || chunk.includes('[PROGRESS')) {
+            console.log('[ChatPanel] 📨 Received marker chunk:', chunk.substring(0, 200));
+          }
+
           // Parse [STATUS:phase:message] markers for immediate feedback
           const statusMatches = chunk.matchAll(/\[STATUS:([^:]+):([^\]]+)\]/g);
           for (const match of statusMatches) {
@@ -624,9 +634,9 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
           for (const match of workMatches) {
             const [, toolName, description] = match;
             const toolType = toolNameToType[toolName];
+            console.log('[ChatPanel] 🔧 TOOL STARTED:', toolName, '-', description);
 
-            // Stop cycling messages when tool starts
-            clearCycleInterval();
+            // No need to stop cycling - server sends real STATUS markers now
 
             // Only show loading canvas for generation tools, NOT edit tools
             // Edit tools should update in place without the full loading screen
@@ -672,8 +682,8 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
           const remixCrawlMatches = chunk.matchAll(/\[REMIX_CRAWL:([^:]+):([^\]]+)\]/g);
           for (const match of remixCrawlMatches) {
             const [, url, message] = match;
-            // Update tool stage with crawl progress
-            updateToolStage('remix_website', `Crawling: ${message}`);
+            // Update tool stage with crawl progress (deferred to avoid setState during render)
+            queueMicrotask(() => updateToolStage('remix_website', `Crawling: ${message}`));
             // Also update the chat message with lively crawl progress
             updateMessage(assistantMessageId, `🔍 ${message}`);
           }
@@ -682,8 +692,8 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
           const remixAnalyzeMatches = chunk.matchAll(/\[REMIX_ANALYZE:([^:]+):([^\]]+)\]/g);
           for (const match of remixAnalyzeMatches) {
             const [, step, message] = match;
-            // Update tool stage with analyze progress
-            updateToolStage('remix_website', message);
+            // Update tool stage with analyze progress (deferred to avoid setState during render)
+            queueMicrotask(() => updateToolStage('remix_website', message));
             // Also update the chat message with analyze progress
             updateMessage(assistantMessageId, `🎯 ${message}`);
           }
@@ -692,8 +702,8 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
           const remixGenMatches = chunk.matchAll(/\[REMIX_GENERATE:([^:]+):([^\]]+)\]/g);
           for (const match of remixGenMatches) {
             const [, page, message] = match;
-            // Update tool stage with generation progress
-            updateToolStage('remix_website', `Generating: ${message}`);
+            // Update tool stage with generation progress (deferred to avoid setState during render)
+            queueMicrotask(() => updateToolStage('remix_website', `Generating: ${message}`));
             // Also update the chat message with generation progress
             updateMessage(assistantMessageId, `🎨 ${message}`);
           }
@@ -711,6 +721,7 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
           for (const match of doneMatches) {
             const [, toolName, duration] = match;
             const toolType = toolNameToType[toolName];
+            console.log('[ChatPanel] ✅ TOOL COMPLETED:', toolName, duration ? `(${duration})` : '');
 
             // Update local work items state
             setWorkItems(prev => ({
@@ -733,24 +744,49 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
               setWorkspaceView(targetView);
             }
 
-            // Fallback: Manually refresh artifact from database after tool completes
-            // This ensures the UI updates even if Supabase Realtime doesn't fire
-            const artifactType = toolNameToArtifactType[toolName];
-            if (artifactType) {
-              console.log('[ChatPanel] Refreshing artifact after tool completion:', artifactType);
-              // Longer delay for leads to ensure database has been updated
-              const delay = toolName === 'generate_leads' ? 1500 : 500;
-              setTimeout(async () => {
-                console.log('[ChatPanel] Executing refresh for:', artifactType);
-                await refreshArtifact(artifactType);
-                // For leads, do a second refresh after another delay to be safe
-                if (toolName === 'generate_leads') {
-                  setTimeout(() => {
-                    console.log('[ChatPanel] Second refresh for leads');
-                    refreshArtifact(artifactType);
-                  }, 2000);
-                }
-              }, delay);
+            // Refresh artifact after tool completes (store has retry logic for race condition)
+            // Special handling for edit_website - check if we're editing a lead website
+            if (toolName === 'edit_website') {
+              const canvasState = useProjectStore.getState().canvasState;
+              if (canvasState.type === 'lead-detail') {
+                // Lead website edit - emit event for LeadDetailWorkspace to refresh
+                console.log('[ChatPanel] Lead website edited, emitting refresh event for lead:', canvasState.leadId);
+                window.dispatchEvent(new CustomEvent('leadWebsiteEdited', {
+                  detail: { leadId: canvasState.leadId }
+                }));
+              } else {
+                // Agency website edit - refresh website_code artifact
+                console.log('[ChatPanel] Agency website edited, refreshing website_code');
+                refreshArtifact('website_code');
+              }
+            } else {
+              const artifactType = toolNameToArtifactType[toolName];
+              if (artifactType) {
+                console.log('[ChatPanel] Refreshing artifact:', artifactType);
+                refreshArtifact(artifactType);
+              }
+            }
+
+            // Emit completion event for lead website generation
+            if (toolName === 'generate_website_files' && effectiveLeadId) {
+              console.log('[ChatPanel] Emitting leadWebsiteGenerated for lead:', effectiveLeadId);
+              window.dispatchEvent(new CustomEvent('leadWebsiteGenerated', {
+                detail: { leadId: effectiveLeadId, success: true }
+              }));
+            }
+          }
+
+          // Parse [WORK_PROGRESS:tool:message] markers (progress updates)
+          const workProgressMatches = chunk.matchAll(/\[WORK_PROGRESS:(\w+):([^\]]+)\]/g);
+          for (const match of workProgressMatches) {
+            const [, toolName, message] = match;
+            console.log('[ChatPanel] 📊 Progress:', toolName, message);
+
+            // Emit progress event for lead website generation
+            if (toolName === 'generate_website_files' && effectiveLeadId) {
+              window.dispatchEvent(new CustomEvent('leadWebsiteProgress', {
+                detail: { leadId: effectiveLeadId, stage: toolName, message }
+              }));
             }
           }
 
@@ -809,8 +845,8 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
               const runningToolName = Object.keys(prev).find(k => prev[k].status === 'running');
               if (!runningToolName) return prev;
 
-              // Also update global tool status for LoadingCanvas
-              updateToolStage(runningToolName, message);
+              // Also update global tool status for LoadingCanvas (deferred to avoid setState during render)
+              queueMicrotask(() => updateToolStage(runningToolName, message));
 
               const currentTool = prev[runningToolName];
               const existingStages = currentTool.stages || [];
@@ -821,9 +857,9 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
                 status: 'complete' as const,
               }));
 
-              // Add the new stage as active
+              // Add the new stage as active with unique ID (using crypto.randomUUID per React best practices)
               updatedStages.push({
-                id: stageId,
+                id: crypto.randomUUID(),
                 message,
                 status: 'active',
                 timestamp: Date.now(),
@@ -845,6 +881,7 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
             .replace(/\[WORK:\w+:[^\]]+\]\n?/g, '')
             .replace(/\[WORK_DONE:\w+:[^\]]*\]\n?/g, '')
             .replace(/\[WORK_ERROR:\w+:[^\]]+\]\n?/g, '')
+            .replace(/\[WORK_PROGRESS:\w+:[^\]]+\]\n?/g, '')
             .replace(/\[CODE_CHANGE:[^\]]+\]\n?/g, '')
             // Status markers for immediate feedback
             .replace(/\[STATUS:[^\]]+\]\n?/g, '')
@@ -881,24 +918,32 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
       setIsLoading(false);
       abortControllerRef.current = null;
       submissionLockRef.current = false; // Release lock
-      clearCycleInterval(); // Ensure cycling messages stop
+      setActiveLeadId(null); // Clear lead context after request completes
+      // No fake cycling to clear - server sends real STATUS markers now
     }
-  }, [project?.id, isLoading, input, storeMessages, selectedModelId, addMessage, updateMessage, setToolRunning, setHasStartedGeneration, setWorkspaceView, selectedElementSelector, setSelectedElementSelector, setSelectedElementInfo]);
+  }, [project?.id, isLoading, input, storeMessages, selectedModelId, addMessage, updateMessage, setToolRunning, setHasStartedGeneration, setWorkspaceView, selectedElementSelector, setSelectedElementSelector, setSelectedElementInfo, activeLeadId]);
 
   // Keep ref updated with latest handleSendMessage
   useEffect(() => {
     handleSendMessageRef.current = handleSendMessage;
   }, [handleSendMessage]);
 
-  // Listen for auto-submit event from WorkspaceHydration
+  // Listen for auto-submit event from WorkspaceHydration and LeadDetailWorkspace
   // IMPORTANT: Use ref to avoid re-registering listener when handleSendMessage changes
   useEffect(() => {
     const handleAutoSubmit = (event: CustomEvent) => {
       console.log('[ChatPanel] autoSubmitPrompt event received', event.detail);
-      const { prompt } = event.detail;
+      const { prompt, leadId, leadName } = event.detail;
+
+      // Log lead context if provided
+      if (leadId) {
+        console.log('[ChatPanel] Lead website generation for:', leadId, leadName);
+      }
+
       if (prompt && handleSendMessageRef.current) {
-        console.log('[ChatPanel] Auto-submitting prompt via ref:', prompt);
-        handleSendMessageRef.current(prompt);
+        console.log('[ChatPanel] Auto-submitting prompt via ref:', prompt, 'leadId:', leadId);
+        // Pass leadId directly to avoid async state timing issues
+        handleSendMessageRef.current(prompt, leadId);
       } else {
         console.warn('[ChatPanel] Auto-submit blocked - no ref or prompt');
       }
@@ -932,7 +977,7 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
             {storeMessages.map((message, index) => {
               const isLastMessage = index === storeMessages.length - 1;
               const isStreaming = isLastMessage && isLoading && message.role === 'assistant';
-              const isInitialLoading = isStreaming && message.content.startsWith('⏳');
+              const isInitialLoading = isStreaming && message.content.startsWith('🔄');
               const hasWorkItems = isLastMessage && Object.keys(workItems).length > 0;
               const hasCodeChanges = codeChanges[message.id] && codeChanges[message.id].length > 0;
 
@@ -1014,14 +1059,23 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
                                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-zinc-400 dark:bg-zinc-500 opacity-75"></span>
                                   <span className="relative inline-flex rounded-full h-4 w-4 bg-zinc-500 dark:bg-zinc-400"></span>
                                 </span>
-                                <span className="text-zinc-600 dark:text-zinc-400">
-                                  {message.content.replace(/^[^\s]+\s/, '')}
-                                  <span className="inline-flex ml-1">
-                                    <span className="animate-bounce" style={{ animationDelay: '0ms' }}>.</span>
-                                    <span className="animate-bounce" style={{ animationDelay: '150ms' }}>.</span>
-                                    <span className="animate-bounce" style={{ animationDelay: '300ms' }}>.</span>
-                                  </span>
-                                </span>
+                                <WaveText
+                                  text={message.content.replace(/^[^\s]+\s/, '')}
+                                  className="text-zinc-600 dark:text-zinc-400"
+                                />
+                              </div>
+                            ) : (message.metadata as any)?.type === 'model_change' ? (
+                              <div className="flex items-center gap-2">
+                                <span className="text-zinc-500 dark:text-zinc-400">Model changed to</span>
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={(message.metadata as any).modelLogo}
+                                  alt=""
+                                  width={16}
+                                  height={16}
+                                  className="rounded-sm"
+                                />
+                                <span className="font-medium">{(message.metadata as any).modelName}</span>
                               </div>
                             ) : (
                               <>
@@ -1177,7 +1231,10 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
                 pendingImages.length > 0 && selectedElementInfo ? 'pt-32' : pendingImages.length > 0 ? 'pt-20' : selectedElementInfo ? 'pt-14' : 'pt-3'
               }`}
               rows={1}
-              style={{ minHeight: '120px', maxHeight: '300px' }}
+              style={{
+                minHeight: pendingImages.length > 0 || selectedElementInfo ? '180px' : '120px',
+                maxHeight: '300px'
+              }}
               disabled={isLoading}
             />
 
@@ -1307,6 +1364,21 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
                               key={model.id}
                               type="button"
                               onClick={() => {
+                                // Only show message if model actually changed
+                                if (selectedModel.id !== model.id) {
+                                  addMessage({
+                                    id: crypto.randomUUID(),
+                                    project_id: project?.id || '',
+                                    role: 'assistant',
+                                    content: `Model changed to ${model.name}`,
+                                    created_at: new Date().toISOString(),
+                                    metadata: {
+                                      type: 'model_change',
+                                      modelName: model.name,
+                                      modelLogo: model.providerLogo,
+                                    },
+                                  });
+                                }
                                 setSelectedModel(model);
                                 setSelectedModelId(model.id);
                                 setIsModelDropdownOpen(false);
@@ -1341,15 +1413,26 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
               </div>
             </div>
 
-            {/* Right Send Button */}
-            <button
-              type="submit"
-              disabled={!hasInput || isLoading}
-              className="absolute bottom-3 right-3 flex items-center justify-center w-7 h-7 text-white bg-zinc-900 dark:bg-white dark:text-zinc-900 rounded-lg hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-              aria-label="Send message"
-            >
-              <ArrowUp size={16} strokeWidth={2} />
-            </button>
+            {/* Right Send/Stop Button */}
+            {isLoading ? (
+              <button
+                type="button"
+                onClick={() => abortControllerRef.current?.abort()}
+                className="absolute bottom-3 right-3 flex items-center justify-center w-7 h-7 bg-zinc-900 dark:bg-white rounded-lg hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-all"
+                aria-label="Stop generating"
+              >
+                <Square size={12} strokeWidth={0} className="fill-white dark:fill-zinc-900" />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!hasInput}
+                className="absolute bottom-3 right-3 flex items-center justify-center w-7 h-7 text-white bg-zinc-900 dark:bg-white dark:text-zinc-900 rounded-lg hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                aria-label="Send message"
+              >
+                <ArrowUp size={16} strokeWidth={2} />
+              </button>
+            )}
           </div>
         </div>
       </form>

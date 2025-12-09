@@ -174,7 +174,7 @@ export async function crawlSite(
       width: 1440,
       height: 900,
       fullPage: false,
-      delay: 2000,
+      delay: 500, // Reduced from 2000ms for faster crawling
     });
 
     if (screenshotResult.success && screenshotResult.base64) {

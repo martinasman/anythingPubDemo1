@@ -334,6 +334,30 @@ export interface ExtractedContent {
     hasGallery: boolean;
   };
   images: string[];
+  // NEW: All extracted colors with usage context
+  allColors?: Array<{
+    hex: string;
+    usage: 'background' | 'text' | 'button' | 'accent' | 'border' | 'unknown';
+    frequency: number;
+  }>;
+  // NEW: Page structure for mimicking
+  pageStructure?: {
+    navigation: {
+      items: string[];
+      style: 'horizontal' | 'hamburger' | 'sidebar' | 'none';
+    };
+    sections: Array<{
+      type: 'hero' | 'features' | 'testimonials' | 'pricing' | 'cta' | 'about' | 'services' | 'gallery' | 'contact' | 'faq' | 'stats' | 'team' | 'partners' | 'unknown';
+      heading?: string;
+      hasImage: boolean;
+      layout: 'centered' | 'split-left' | 'split-right' | 'grid' | 'cards' | 'unknown';
+    }>;
+    footer: {
+      hasContact: boolean;
+      hasSocial: boolean;
+      columns: number;
+    };
+  };
 }
 
 /**
@@ -378,11 +402,17 @@ export async function extractWebsiteContent(url: string): Promise<ExtractedConte
     // Extract colors
     const colors = extractColors(html, document);
 
+    // Extract all colors with usage context
+    const allColors = extractAllColors(html, document);
+
     // Extract text content
     const content = extractTextContent(document);
 
     // Analyze structure
     const structure = analyzeStructure(document);
+
+    // Extract page structure for mimicking
+    const pageStructure = extractPageStructure(document);
 
     // Extract images
     const images = extractImages(document, normalizedUrl);
@@ -393,6 +423,8 @@ export async function extractWebsiteContent(url: string): Promise<ExtractedConte
       content,
       structure,
       images,
+      allColors,
+      pageStructure,
     };
   } catch (error) {
     // Return minimal content on error
@@ -561,6 +593,273 @@ function extractImages(document: any, baseUrl: string): string[] {
   });
 
   return images;
+}
+
+/**
+ * Extract all colors with usage context
+ */
+type ColorUsage = 'background' | 'text' | 'button' | 'accent' | 'border' | 'unknown';
+
+function extractAllColors(
+  html: string,
+  document: any
+): ExtractedContent['allColors'] {
+  const colorMap = new Map<string, { usage: ColorUsage; count: number }>();
+
+  // Helper to normalize hex colors
+  const normalizeHex = (color: string): string | null => {
+    // Convert RGB to hex
+    const rgbMatch = color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+    if (rgbMatch) {
+      const r = parseInt(rgbMatch[1]);
+      const g = parseInt(rgbMatch[2]);
+      const b = parseInt(rgbMatch[3]);
+      return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`.toUpperCase();
+    }
+
+    // Already hex
+    if (color.match(/^#[0-9A-Fa-f]{6}$/)) {
+      return color.toUpperCase();
+    }
+    if (color.match(/^#[0-9A-Fa-f]{3}$/)) {
+      // Expand 3-digit hex
+      return `#${color[1]}${color[1]}${color[2]}${color[2]}${color[3]}${color[3]}`.toUpperCase();
+    }
+
+    return null;
+  };
+
+  // Helper to add color with usage
+  const addColor = (hex: string | null, usage: ColorUsage) => {
+    if (!hex) return;
+
+    // Skip very light (near white) or very dark (near black) colors
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+    if (brightness < 20 || brightness > 235) return; // Skip near black/white
+
+    const existing = colorMap.get(hex);
+    if (existing) {
+      existing.count++;
+      // Keep more specific usage
+      if (usage !== 'unknown' && existing.usage === 'unknown') {
+        existing.usage = usage;
+      }
+    } else {
+      colorMap.set(hex, { usage, count: 1 });
+    }
+  };
+
+  // Extract from style attributes
+  const allElements = document.querySelectorAll('[style]');
+  allElements.forEach((el: any) => {
+    const style = el.getAttribute('style') || '';
+
+    // Background colors
+    const bgMatch = style.match(/background(?:-color)?:\s*([^;]+)/);
+    if (bgMatch) {
+      addColor(normalizeHex(bgMatch[1].trim()), 'background');
+    }
+
+    // Text colors
+    const colorMatch = style.match(/(?:^|;)\s*color:\s*([^;]+)/);
+    if (colorMatch) {
+      addColor(normalizeHex(colorMatch[1].trim()), 'text');
+    }
+
+    // Border colors
+    const borderMatch = style.match(/border(?:-color)?:\s*([^;]+)/);
+    if (borderMatch) {
+      addColor(normalizeHex(borderMatch[1].trim()), 'border');
+    }
+  });
+
+  // Extract from buttons
+  const buttons = document.querySelectorAll('button, a[class*="btn"], [class*="button"]');
+  buttons.forEach((btn: any) => {
+    const style = btn.getAttribute('style') || '';
+    const bgMatch = style.match(/background(?:-color)?:\s*([^;]+)/);
+    if (bgMatch) {
+      addColor(normalizeHex(bgMatch[1].trim()), 'button');
+    }
+  });
+
+  // Extract from CSS in <style> tags
+  const styleTags = document.querySelectorAll('style');
+  styleTags.forEach((styleTag: any) => {
+    const css = styleTag.textContent || '';
+    const hexColors = css.match(/#[0-9A-Fa-f]{3,6}/g) || [];
+    hexColors.forEach((hex: string) => addColor(normalizeHex(hex), 'unknown'));
+
+    const rgbColors = css.match(/rgb\(\d+,\s*\d+,\s*\d+\)/g) || [];
+    rgbColors.forEach((rgb: string) => addColor(normalizeHex(rgb), 'unknown'));
+  });
+
+  // Extract from inline hex colors in HTML
+  const htmlHexColors = html.match(/#[0-9A-Fa-f]{6}/g) || [];
+  htmlHexColors.forEach(hex => addColor(normalizeHex(hex), 'unknown'));
+
+  // Theme color meta tag
+  const themeColor = document.querySelector('meta[name="theme-color"]');
+  if (themeColor) {
+    addColor(normalizeHex(themeColor.getAttribute('content')), 'accent');
+  }
+
+  // Convert to array and sort by frequency
+  const colors = Array.from(colorMap.entries())
+    .map(([hex, data]) => ({
+      hex,
+      usage: data.usage,
+      frequency: data.count,
+    }))
+    .sort((a, b) => b.frequency - a.frequency)
+    .slice(0, 10); // Top 10 colors
+
+  return colors.length > 0 ? colors : undefined;
+}
+
+/**
+ * Extract page structure for mimicking
+ */
+type NavStyle = 'horizontal' | 'hamburger' | 'sidebar' | 'none';
+type SectionType = 'hero' | 'features' | 'testimonials' | 'pricing' | 'cta' | 'about' | 'services' | 'gallery' | 'contact' | 'faq' | 'stats' | 'team' | 'partners' | 'unknown';
+type SectionLayout = 'centered' | 'split-left' | 'split-right' | 'grid' | 'cards' | 'unknown';
+
+function extractPageStructure(document: any): ExtractedContent['pageStructure'] {
+  // Extract navigation
+  const navItems: string[] = [];
+  let navStyle: NavStyle = 'none';
+
+  const nav = document.querySelector('nav, header nav, [class*="nav"], [class*="menu"]');
+  if (nav) {
+    const links = nav.querySelectorAll('a');
+    links.forEach((link: any) => {
+      const text = link.textContent?.trim();
+      if (text && text.length < 30 && !text.match(/^(logo|icon|img)$/i)) {
+        navItems.push(text);
+      }
+    });
+
+    // Detect nav style
+    const navClass = nav.className || '';
+    if (navClass.match(/hamburger|mobile|toggle/i) || nav.querySelector('[class*="hamburger"], [class*="toggle"]')) {
+      navStyle = 'hamburger';
+    } else if (navClass.match(/sidebar|vertical/i)) {
+      navStyle = 'sidebar';
+    } else {
+      navStyle = 'horizontal';
+    }
+  }
+
+  // Extract sections
+  const sections: Array<{
+    type: SectionType;
+    heading?: string;
+    hasImage: boolean;
+    layout: SectionLayout;
+  }> = [];
+  const sectionElements = document.querySelectorAll('section, [class*="section"], main > div, article');
+
+  sectionElements.forEach((section: any) => {
+    const className = (section.className || '').toLowerCase();
+    const id = (section.id || '').toLowerCase();
+    const innerText = section.textContent?.toLowerCase() || '';
+
+    // Determine section type
+    let type: SectionType = 'unknown';
+
+    if (className.match(/hero|banner|jumbotron/) || id.match(/hero|banner/)) {
+      type = 'hero';
+    } else if (className.match(/feature|benefit/) || id.match(/feature/)) {
+      type = 'features';
+    } else if (className.match(/testimonial|review|quote/) || innerText.includes('testimonial')) {
+      type = 'testimonials';
+    } else if (className.match(/pricing|plan/) || id.match(/pricing/)) {
+      type = 'pricing';
+    } else if (className.match(/cta|call-to-action/) || id.match(/cta/)) {
+      type = 'cta';
+    } else if (className.match(/about/) || id.match(/about/) || innerText.includes('about us')) {
+      type = 'about';
+    } else if (className.match(/service|offering/) || id.match(/service/)) {
+      type = 'services';
+    } else if (className.match(/gallery|portfolio|work/) || id.match(/gallery|portfolio/)) {
+      type = 'gallery';
+    } else if (className.match(/contact|form/) || id.match(/contact/) || section.querySelector('form')) {
+      type = 'contact';
+    } else if (className.match(/faq|question/) || id.match(/faq/)) {
+      type = 'faq';
+    } else if (className.match(/stat|number|counter/) || id.match(/stat/)) {
+      type = 'stats';
+    } else if (className.match(/team|staff/) || id.match(/team/)) {
+      type = 'team';
+    } else if (className.match(/partner|client|logo/) || id.match(/partner/)) {
+      type = 'partners';
+    }
+
+    // Get heading
+    const heading = section.querySelector('h1, h2, h3');
+    const headingText = heading?.textContent?.trim().substring(0, 100);
+
+    // Check for images
+    const hasImage = !!section.querySelector('img, [class*="image"], [style*="background-image"]');
+
+    // Determine layout
+    let layout: SectionLayout = 'unknown';
+    if (className.match(/center|centered/) || section.style?.textAlign === 'center') {
+      layout = 'centered';
+    } else if (className.match(/grid|col/) || section.querySelector('[class*="grid"], [class*="col-"]')) {
+      layout = 'grid';
+    } else if (className.match(/card/) || section.querySelector('[class*="card"]')) {
+      layout = 'cards';
+    } else if (section.querySelector('img') && section.querySelector('p, h2, h3')) {
+      // Image + text combo
+      const img = section.querySelector('img');
+      const imgRect = img?.getBoundingClientRect?.();
+      // Approximate: if image is on left side
+      if (imgRect && imgRect.left < 400) {
+        layout = 'split-left';
+      } else {
+        layout = 'split-right';
+      }
+    }
+
+    sections.push({
+      type,
+      heading: headingText,
+      hasImage,
+      layout,
+    });
+  });
+
+  // Extract footer info
+  const footer = document.querySelector('footer');
+  let footerInfo = {
+    hasContact: false,
+    hasSocial: false,
+    columns: 1,
+  };
+
+  if (footer) {
+    footerInfo.hasContact = !!(footer.querySelector('a[href^="mailto:"], a[href^="tel:"], [class*="contact"]') ||
+      footer.textContent?.match(/\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/));
+
+    footerInfo.hasSocial = !!(footer.querySelector('[class*="social"], a[href*="facebook"], a[href*="twitter"], a[href*="instagram"], a[href*="linkedin"]'));
+
+    // Count columns (divs or flex/grid children)
+    const footerChildren = footer.querySelectorAll(':scope > div, :scope > nav, :scope > section');
+    footerInfo.columns = Math.min(footerChildren.length, 5) || 1;
+  }
+
+  return {
+    navigation: {
+      items: navItems.slice(0, 10), // Max 10 nav items
+      style: navStyle,
+    },
+    sections: sections.filter((s: { type: SectionType }) => s.type !== 'unknown').slice(0, 15), // Max 15 sections, exclude unknown
+    footer: footerInfo,
+  };
 }
 
 // ============================================

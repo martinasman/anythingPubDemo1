@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react';
 import PreviewPanel from './PreviewPanel';
 import BrandView from './BrandView';
 import WebsiteFocusView from './WebsiteFocusView';
-import CRMFocusView from './CRMFocusView';
+import CRMDashboard from './CRMDashboard';
 import ClientsView from './ClientsView';
 import BusinessPlanView from './BusinessPlanView';
 import FirstWeekPlanView from './FirstWeekPlanView';
@@ -33,6 +33,32 @@ function EmptyStatePrompt() {
         </p>
       </div>
     </div>
+  );
+}
+
+// CRM Dashboard wrapper - connects store to component
+function CRMDashboardWrapper() {
+  const { artifacts, updateLeadStatus, setCanvasState, deleteLead } = useProjectStore();
+
+  // Lead websites are detected by checking if leads have previewToken set
+  // We pass empty array - the dashboard checks lead.previewToken directly
+  return (
+    <CRMDashboard
+      leads={artifacts.leads}
+      outreach={artifacts.outreach}
+      leadWebsites={[]}
+      isLoading={false}
+      onGenerateLeads={() => {
+        window.dispatchEvent(new CustomEvent('autoSubmitPrompt', {
+          detail: { prompt: 'Find me 10 potential leads in my target market' }
+        }));
+      }}
+      onUpdateLeadStatus={updateLeadStatus}
+      onLeadClick={(lead) => {
+        setCanvasState({ type: 'lead-detail', leadId: lead.id });
+      }}
+      onDeleteLead={deleteLead}
+    />
   );
 }
 
@@ -95,7 +121,7 @@ export default function ContextPanel() {
         case 'plan':
           return <FirstWeekPlanView />;
         case 'leads':
-          return <CRMFocusView />;
+          return <CRMDashboardWrapper />;
         case 'clients':
           return <ClientsView />;
         case 'ads':

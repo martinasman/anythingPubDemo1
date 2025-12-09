@@ -286,6 +286,94 @@ export async function searchBusinessesNeedingWebsites(
 }
 
 // ============================================
+// SEARCH BUSINESSES WITHOUT WEBSITES
+// ============================================
+
+/**
+ * High-value business categories most likely to lack websites
+ * Organized by industry for UI dropdown
+ */
+export const HIGH_VALUE_CATEGORIES = {
+  'Home Services': [
+    'plumbers', 'electricians', 'HVAC', 'handyman', 'landscaping',
+    'cleaning services', 'roofers', 'painters', 'pest control'
+  ],
+  'Food & Beverage': [
+    'food trucks', 'bakeries', 'catering', 'small restaurants',
+    'cafes', 'delis', 'food stands'
+  ],
+  'Health & Wellness': [
+    'massage therapists', 'personal trainers', 'yoga studios',
+    'chiropractors', 'acupuncturists', 'nutritionists'
+  ],
+  'Professional Services': [
+    'accountants', 'notary', 'tax preparation', 'tutoring',
+    'consultants', 'bookkeepers', 'translators'
+  ],
+  'Retail': [
+    'boutiques', 'gift shops', 'antique stores', 'jewelry stores',
+    'florists', 'pet stores', 'thrift stores'
+  ],
+  'Auto & Transport': [
+    'auto repair', 'car detailing', 'towing services',
+    'tire shops', 'auto body shops'
+  ],
+};
+
+/**
+ * Search for businesses WITHOUT websites
+ * Searches multiple categories and filters to only return businesses with no website
+ */
+export async function searchBusinessesWithoutWebsites(
+  location: string,
+  categories: string[] = ['plumbers', 'electricians', 'restaurants', 'cleaning services'],
+  limit: number = 30
+): Promise<GoogleMapsResult[]> {
+  console.log('[SerpAPI] ===== SEARCHING FOR BUSINESSES WITHOUT WEBSITES =====');
+  console.log('[SerpAPI] Location:', location);
+  console.log('[SerpAPI] Categories:', categories);
+  console.log('[SerpAPI] Limit:', limit);
+
+  const allResults: GoogleMapsResult[] = [];
+
+  // Search each category
+  for (const category of categories) {
+    console.log(`[SerpAPI] Searching category: ${category}`);
+
+    const results = await searchGoogleMapsBusinesses(
+      `${category}`,
+      location,
+      { limit: limit * 2 } // Over-fetch since we'll filter
+    );
+
+    // FILTER: Only keep businesses WITHOUT a website
+    const noWebsite = results.filter(r => !r.website);
+    console.log(`[SerpAPI] ${category}: ${results.length} total, ${noWebsite.length} without websites`);
+
+    allResults.push(...noWebsite);
+  }
+
+  // Dedupe by placeId
+  const unique = Array.from(
+    new Map(allResults.map(r => [r.placeId, r])).values()
+  );
+
+  console.log(`[SerpAPI] Total unique businesses without websites: ${unique.length}`);
+
+  // Sort by signals that indicate good targets:
+  // - Fewer reviews = newer business = better target
+  // - But has SOME reviews = legitimate business
+  return unique
+    .sort((a, b) => {
+      // Prioritize businesses with some reviews (legitimate) but not many (new)
+      const aScore = a.reviewCount ? Math.min(a.reviewCount, 50) : 0;
+      const bScore = b.reviewCount ? Math.min(b.reviewCount, 50) : 0;
+      return aScore - bScore; // Lower review count first
+    })
+    .slice(0, limit);
+}
+
+// ============================================
 // GEOCODING HELPER
 // ============================================
 

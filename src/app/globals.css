@@ -401,3 +401,36 @@ html {
 .animate-gradient-flow {
   animation: gradient-flow 8s ease-in-out infinite;
 }
+
+/* ============================================
+   GRADIENT TEXT ANIMATION - Dancing Title
+   ============================================ */
+@keyframes gradient-text-flow {
+  0% {
+    background-position: 0% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+.animate-gradient-text {
+  animation: gradient-text-flow 3s linear infinite;
+}
+
+/* ============================================
+   WAVE COLOR ANIMATION - Thinking Text
+   ============================================ */
+
+@keyframes wave-color {
+  0%, 100% {
+    color: var(--text-muted);
+  }
+  50% {
+    color: var(--accent);
+  }
+}
+
+.animate-wave-color {
+  animation: wave-color 1.5s ease-in-out infinite;
+}

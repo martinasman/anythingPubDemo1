@@ -147,9 +147,27 @@ export async function deployToVercel(
 
   const deployment = await response.json();
 
+  // If using a custom domain (not vercel.app), add the subdomain as a domain alias
+  if (PUBLISH_BASE_DOMAIN && PUBLISH_BASE_DOMAIN !== 'vercel.app') {
+    const customDomain = `${subdomain}.${PUBLISH_BASE_DOMAIN}`;
+    try {
+      // Add the custom domain to the project
+      await addCustomDomain(subdomain, customDomain);
+      console.log(`Added custom domain: ${customDomain}`);
+    } catch (domainError) {
+      // Log but don't fail the deployment - domain can be added later
+      console.error(`Failed to add custom domain ${customDomain}:`, domainError);
+    }
+  }
+
+  // Return the custom domain URL if configured, otherwise the Vercel URL
+  const finalUrl = PUBLISH_BASE_DOMAIN && PUBLISH_BASE_DOMAIN !== 'vercel.app'
+    ? `https://${subdomain}.${PUBLISH_BASE_DOMAIN}`
+    : `https://${deployment.url}`;
+
   return {
     id: deployment.id,
-    url: `https://${deployment.url}`,
+    url: finalUrl,
     readyState: deployment.readyState,
     alias: deployment.alias,
   };

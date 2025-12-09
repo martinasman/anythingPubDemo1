@@ -19,6 +19,8 @@ import { addWebsitePage, addPageSchema } from '../tools/tool-add-page';
 import { manageCRM, crmSchema } from '../tools/tool-crm';
 // Remix tool for website modernization
 import { remixWebsite, remixSchema } from '../tools/tool-remix';
+// Image generation tool
+import { generateImage, imageSchema } from '../tools/tool-image';
 // AI system prompt
 import { ORCHESTRATOR_SYSTEM_PROMPT } from '@/config/agentPrompts';
 
@@ -35,7 +37,8 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   generate_leads: 'Finding prospects',
   generate_outreach_scripts: 'Writing outreach scripts',
   generate_ads: 'Creating ad campaigns',
-  edit_website: 'Updating website',
+  generate_image: 'Generating image',
+  edit_website: 'Editing with Claude 3.5 Haiku',
   edit_identity: 'Updating brand',
   edit_pricing: 'Updating pricing',
   add_page: 'Adding new page',
@@ -48,22 +51,36 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
 // ============================================
 
 export async function POST(req: Request) {
+  // ============================================
+  // TIMING DIAGNOSTICS
+  // ============================================
+  const timings: Record<string, number> = {};
+  const requestStartTime = Date.now();
+  const logTiming = (label: string) => {
+    const elapsed = Date.now() - requestStartTime;
+    timings[label] = elapsed;
+    console.log(`[Timing] ${label}: ${elapsed}ms`);
+  };
+
   try {
-    const { messages, projectId, modelId, assistantMessageId, chatMode = 'edit' } = await req.json();
+    const { messages, projectId, modelId, assistantMessageId, chatMode = 'edit', leadId } = await req.json();
+    logTiming('request_parsed');
 
     if (!projectId) {
       return new Response('Project ID is required', { status: 400 });
     }
 
-    console.log('[Chat API] Chat mode:', chatMode);
+    console.log('[Chat API] Chat mode:', chatMode, 'Lead ID:', leadId || 'none');
 
     // Initialize Supabase client
     const supabase = await createClient();
+    logTiming('supabase_client_created');
 
     // Initialize OpenRouter client
     const openrouter = createOpenRouter({
       apiKey: process.env.OPENROUTER_API_KEY!,
     });
+    logTiming('openrouter_client_created');
 
     // Use selected model or default to Claude 3.5 Sonnet
     // Model selector already filters for tool-compatible models
@@ -76,28 +93,39 @@ export async function POST(req: Request) {
     console.log('[Chat API] Model:', selectedModel);
     console.log('[Chat API] Messages count:', messages.length);
 
-    // Save user message FIRST (before streaming)
+    // Save user message (fire-and-forget - don't block streaming)
     const userMessage = messages[messages.length - 1];
     if (userMessage.role === 'user') {
-      const { error: userMsgError } = await (supabase.from('messages') as any).insert({
+      (supabase.from('messages') as any).insert({
         id: userMessage.id, // Pass client-generated ID for deduplication
         project_id: projectId,
         role: 'user',
         content: userMessage.content,
+      }).then(({ error: userMsgError }: { error: any }) => {
+        if (userMsgError) console.error('[DB] User message save failed:', userMsgError);
       });
-      if (userMsgError) console.error('[DB] User message save failed:', userMsgError);
     }
+    logTiming('user_message_queued');
 
     // Build system prompt based on chat mode
     const CHAT_MODE_INSTRUCTIONS: Record<string, string> = {
-      edit: `You are in EDIT mode. Focus on making changes to the user's website, brand, or business.
-Use tools to implement changes when the user requests them. Be action-oriented.`,
-      chat: `You are in CHAT mode. Have a helpful conversation without making changes.
-Do NOT use any tools unless explicitly asked. Answer questions, provide advice, and discuss ideas.
-If the user wants to make changes, suggest they switch to Edit mode.`,
+      edit: `You are in EDIT mode. Your ONLY job is to make changes to the website.
+
+⚠️ MANDATORY RULES - YOU MUST FOLLOW THESE:
+1. You MUST call edit_website for ANY website change request - no exceptions
+2. Do NOT say "I encountered an error" or "having trouble" - just call the tool
+3. Do NOT offer to "regenerate" or "rebuild" - use edit_website instead
+4. Do NOT reference previous attempts or failures - treat EVERY request fresh
+5. Do NOT explain what you're going to do - just DO it by calling the tool
+
+When the user asks for ANY change (colors, text, layout, images, sections, etc.):
+→ Your ONLY response is to call edit_website immediately
+→ No preamble, no explanation, just the tool call`,
+      chat: `You are in CHAT mode. Have a helpful conversation.
+You CAN use tools if the user asks for changes - just be conversational about it.
+Answer questions, provide advice, and implement changes when asked.`,
       plan: `You are in PLAN mode. Help the user strategize and plan before building.
-Discuss ideas, create plans, outline features, but do NOT make any changes yet.
-When the user is ready to implement, suggest they switch to Edit mode.`,
+Discuss ideas, create plans, outline features. You can make changes if explicitly asked.`,
     };
 
     const modeInstruction = CHAT_MODE_INSTRUCTIONS[chatMode] || CHAT_MODE_INSTRUCTIONS.edit;
@@ -178,6 +206,27 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
       });
     }
 
+    // ============================================
+    // PROGRESS STREAM SETUP (must be BEFORE tools)
+    // Tools reference writeProgress, activeTools, toolStartTimes
+    // so these must be defined first
+    // ============================================
+
+    // Create a custom readable stream for progress updates
+    const encoder = new TextEncoder();
+    const progressStream = new TransformStream<Uint8Array, Uint8Array>();
+    const progressWriter = progressStream.writable.getWriter();
+
+    // Helper to write progress messages
+    const writeProgress = async (message: string) => {
+      await progressWriter.write(encoder.encode(message));
+    };
+
+    // Track active tools for progress display
+    const activeTools = new Set<string>();
+    const completedTools = new Set<string>();
+    const toolStartTimes: Record<string, number> = {};
+
     // Tool definitions
     const tools = {
       perform_market_research: tool({
@@ -190,7 +239,7 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
       }),
       generate_brand_identity: tool({
         description:
-          'Generate a complete brand identity including logo, color palette, typography, and tagline',
+          'Create a COMPLETE new brand identity for NEW businesses only. DO NOT use for edits. If user says "change colors" or "update name", use edit_identity instead.',
         inputSchema: designSchema,
         execute: async (params) => {
           return await generateBrandIdentity({ ...params, projectId });
@@ -206,7 +255,7 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
       }),
       generate_website_files: tool({
         description:
-          'Generate a complete, responsive website with HTML, CSS, and JavaScript files based on the business description and brand identity',
+          'Generate a COMPLETE new website from scratch for NEW projects only. DO NOT use for edits. If user says "change font", "update colors", "make it more X", use edit_website instead.',
         inputSchema: codeGenSchema,
         execute: async (params) => {
           // Fetch market research if available to inform website generation
@@ -234,6 +283,10 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
             marketResearch,
             mode: appMode,
             imageContext, // Pass image context for embedding/reference
+            leadId, // Pass lead ID for lead website generation
+            onProgress: async (stage, message) => {
+              await writeProgress(`[WORK_PROGRESS:generate_website_files:${message}]\n`);
+            },
           });
         },
       }),
@@ -275,10 +328,27 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
           return await generateAds({ ...params, projectId });
         },
       }),
+      generate_image: tool({
+        description:
+          'Generate an image ONLY when user explicitly says "generate an image", "create a picture", "make me an image". DO NOT use for font changes, color updates, or styling. DO NOT use unless user literally asks for an image.',
+        inputSchema: imageSchema,
+        execute: async (params) => {
+          return await generateImage({
+            ...params,
+            projectId,
+            onProgress: async (update) => {
+              if (update.type === 'stage') {
+                const marker = `[PROGRESS:${update.stage}:${update.message}]\n`;
+                await writeProgress(marker);
+              }
+            }
+          });
+        },
+      }),
       // Edit tools for modifying existing artifacts
       edit_website: tool({
         description:
-          'Edit an existing website - use this to make changes like updating colors, text, layout, or sections. DO NOT use generate_website_files for edits.',
+          'ALWAYS use this for ANY changes to an existing website. This is the PRIMARY tool for modifications. Includes: font changes, color updates, layout adjustments, styling changes, "make it more X", section additions, text edits. NEVER use generate_website_files for edits.',
         inputSchema: editWebsiteSchema,
         execute: async (params) => {
           // Emit work marker BEFORE tool executes so progress stages can attach to it
@@ -290,6 +360,7 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
             projectId,
             imageContext, // Pass image context for vision-based edits
             modelId: selectedModel, // Use user's selected model
+            leadId, // Pass lead ID for lead website editing
             onProgress: async (update) => {
               if (update.type === 'stage') {
                 // Emit progress stage marker
@@ -306,7 +377,7 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
       }),
       edit_identity: tool({
         description:
-          'Edit the existing brand identity - use this to change the business name, colors, tagline, or regenerate the logo. Do NOT use generate_brand_identity for edits.',
+          'ALWAYS use this for ANY changes to existing brand identity. Includes: changing business name, colors, tagline, logo updates. NEVER use generate_brand_identity for edits.',
         inputSchema: editIdentitySchema,
         execute: async (params) => {
           return await editBrandIdentity({
@@ -341,12 +412,13 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
       // Add new page to website
       add_page: tool({
         description:
-          'Add a new page to an existing website. Creates a new HTML page with matching styles and navigation. Use when user asks to add an about page, contact page, services page, etc.',
+          'Add a new page to an existing website. Creates a new HTML page with matching styles and navigation. Use when user asks to add an about page, contact page, services page, etc. If leadId is provided (from lead context), adds page to lead website.',
         inputSchema: addPageSchema,
         execute: async (params) => {
           return await addWebsitePage({
             ...params,
             projectId,
+            leadId, // Pass leadId if available from context
             onProgress: async (update) => {
               if (update.type === 'stage') {
                 const marker = `[PROGRESS:${update.stage}:${update.message}]\n`;
@@ -398,25 +470,63 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
       }),
     };
 
-    // Create a custom readable stream for progress updates
-    const encoder = new TextEncoder();
-    const progressStream = new TransformStream<Uint8Array, Uint8Array>();
-    const progressWriter = progressStream.writable.getWriter();
+    // Send REAL status updates to client (not fake cycling messages)
+    // These show actual progress in the chat UI
+    // NOTE: Don't await - writeProgress blocks if stream has no reader yet (backpressure)
+    writeProgress('[STATUS:init:Analyzing your request...]\n');
 
-    // Helper to write progress messages
-    const writeProgress = async (message: string) => {
-      await progressWriter.write(encoder.encode(message));
+    // Log timing before starting stream
+    logTiming('stream_starting');
+
+    // Send status update that we're connecting to AI
+    // NOTE: Don't await - writeProgress blocks if stream has no reader yet (backpressure)
+    writeProgress('[STATUS:connecting:Connecting to AI...]\n');
+
+    // Track if we've received the first AI response (for timing)
+    let firstTokenReceived = false;
+
+    // Track if an edit tool completed successfully - suppress AI text after
+    let editToolCompleted = false;
+
+    // Timeout-based status escalation for cold starts
+    // Send reassuring messages if AI takes too long to respond
+    // Extended to cover 70+ seconds for cold starts that can take 1+ minute
+    let statusEscalationTimer: NodeJS.Timeout | null = null;
+    const STATUS_ESCALATION_MESSAGES = [
+      { delay: 2000, msg: '[STATUS:thinking:AI is thinking...]\n' },
+      { delay: 6000, msg: '[STATUS:processing:Still connecting...]\n' },
+      { delay: 12000, msg: '[STATUS:waiting:This is taking longer than usual...]\n' },
+      { delay: 20000, msg: '[STATUS:warming:AI model is warming up...]\n' },
+      { delay: 35000, msg: '[STATUS:patience:Almost there, thanks for waiting...]\n' },
+      { delay: 50000, msg: '[STATUS:loading:Still loading, please hold...]\n' },
+      { delay: 70000, msg: '[STATUS:slow:Unusually slow today, hang tight...]\n' },
+    ];
+    let escalationIndex = 0;
+
+    const scheduleNextEscalation = () => {
+      if (escalationIndex >= STATUS_ESCALATION_MESSAGES.length) return;
+      const { delay, msg } = STATUS_ESCALATION_MESSAGES[escalationIndex];
+      const currentDelay = escalationIndex === 0 ? delay : (delay - STATUS_ESCALATION_MESSAGES[escalationIndex - 1].delay);
+
+      statusEscalationTimer = setTimeout(() => {
+        if (!firstTokenReceived) {
+          // NOTE: Don't await - fire and forget to avoid blocking
+          writeProgress(msg);
+          escalationIndex++;
+          scheduleNextEscalation();
+        }
+      }, currentDelay);
     };
 
-    // Track active tools for progress display
-    const activeTools = new Set<string>();
-    const completedTools = new Set<string>();
-    const toolStartTimes: Record<string, number> = {};
-
-    // IMMEDIATELY emit status so user sees something while AI thinks
-    await writeProgress(`[STATUS:init:Analyzing your request...]\n`);
+    // Start escalation timer
+    scheduleNextEscalation();
 
     // Stream AI response with tools
+    console.log('[Chat API] Starting streamText with model:', selectedModel);
+    console.log('[Chat API] Chat mode:', chatMode);
+    console.log('[Chat API] Tools available:', Object.keys(tools));
+    console.log('[Chat API] User message:', userMessage?.content?.substring(0, 100));
+
     const result = streamText({
       model: openrouter(selectedModel),
       system: SYSTEM_PROMPT,
@@ -428,6 +538,17 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
 
       // Stream progress updates for tool executions
       onStepFinish: async ({ toolCalls, toolResults }) => {
+        // Log timing for first step and clear escalation timer
+        if (!firstTokenReceived) {
+          firstTokenReceived = true;
+          logTiming('first_step_finished');
+          // Clear the cold start escalation timer since we got a response
+          if (statusEscalationTimer) {
+            clearTimeout(statusEscalationTimer);
+            statusEscalationTimer = null;
+          }
+        }
+
         console.log('[Chat API] Step finished with', toolCalls?.length || 0, 'tool calls');
 
         // Emit start markers for new tools
@@ -440,6 +561,7 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
               // Emit simplified [WORK:tool:description] marker
               await writeProgress(`[WORK:${call.toolName}:${displayName}]\n`);
               console.log(`[Chat API] 🔧 Executing: ${call.toolName}`);
+              // Note: generate_website_files now emits its own progress via onProgress callback
             }
           }
         }
@@ -458,7 +580,7 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
 
               // Check if the tool result indicates failure
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const result = (toolResult as any).result as { success?: boolean; error?: string } | undefined;
+              const result = (toolResult as any).result as { success?: boolean; error?: string; summary?: string } | undefined;
               if (result && result.success === false) {
                 // Emit error marker for failed tools
                 const errorMessage = result.error || 'Unknown error';
@@ -470,6 +592,20 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
                 const durationDisplay = duration ? `${duration}s` : '';
                 await writeProgress(`[WORK_DONE:${toolResult.toolName}:${durationDisplay}]\n`);
                 console.log(`[Chat API] ✅ Completed: ${toolResult.toolName}${duration ? ` (${duration}s)` : ''}`);
+
+                // Inject success message for edit tools (AI doesn't reliably see tool results)
+                // Also set flag to suppress any subsequent AI text that might hallucinate errors
+                if (toolResult.toolName === 'edit_website') {
+                  const summary = result?.summary || 'Updated your website';
+                  await writeProgress(`Done! ${summary}.\n`);
+                  editToolCompleted = true;
+                } else if (toolResult.toolName === 'edit_identity') {
+                  await writeProgress(`Done! Updated your brand identity.\n`);
+                  editToolCompleted = true;
+                } else if (toolResult.toolName === 'edit_pricing') {
+                  await writeProgress(`Done! Updated your pricing.\n`);
+                  editToolCompleted = true;
+                }
               }
             }
           }
@@ -478,7 +614,9 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
 
       // Save assistant message when complete
       onFinish: async ({ text, toolCalls, finishReason }) => {
+        logTiming('stream_finished');
         console.log('[Chat API] Stream finished:', finishReason);
+        console.log('[Chat API] === TIMING SUMMARY ===', timings);
         console.log('[Chat API] Tool calls:', toolCalls?.length || 0);
 
         // Generate content from text or tool calls
@@ -491,7 +629,8 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
             : '');
 
         if (finalContent) {
-          const { error: assistantMsgError } = await (supabase.from('messages') as any).insert({
+          // Fire-and-forget - don't block stream close
+          (supabase.from('messages') as any).insert({
             id: assistantMessageId, // Use client-generated ID for deduplication
             project_id: projectId,
             role: 'assistant',
@@ -500,13 +639,13 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
               toolCount: toolCalls?.length || 0,
               finishReason,
             },
+          }).then(({ error: assistantMsgError }: { error: any }) => {
+            if (assistantMsgError) {
+              console.error('[DB] Assistant message save failed:', assistantMsgError);
+            } else {
+              console.log('[DB] ✅ Saved assistant message');
+            }
           });
-
-          if (assistantMsgError) {
-            console.error('[DB] Assistant message save failed:', assistantMsgError);
-          } else {
-            console.log('[DB] ✅ Saved assistant message');
-          }
         }
 
         // Close the progress writer
@@ -526,9 +665,32 @@ When the user is ready to implement, suggest they switch to Edit mode.`,
         // Read from both streams
         const readAI = async () => {
           try {
+            let firstChunk = true;
             while (true) {
               const { done, value } = await aiReader.read();
               if (done) break;
+
+              // Suppress AI text after edit tool completes successfully
+              // This prevents the AI from hallucinating errors after successful edits
+              if (editToolCompleted) {
+                console.log('[Chat API] Suppressing AI text after edit completion');
+                continue; // Skip this chunk
+              }
+
+              // Log timing for first AI text token
+              if (firstChunk) {
+                firstChunk = false;
+                logTiming('first_ai_token');
+                console.log('[Chat API] 🚀 First AI token received!');
+                // Clear escalation timer and mark first token received
+                firstTokenReceived = true;
+                if (statusEscalationTimer) {
+                  clearTimeout(statusEscalationTimer);
+                  statusEscalationTimer = null;
+                }
+                // Send status update that AI is responding
+                controller.enqueue(encoder.encode('[STATUS:responding:AI is responding...]\n'));
+              }
               controller.enqueue(encoder.encode(value));
             }
           } catch (e) {

@@ -94,10 +94,11 @@ export default function HeroInput() {
     <div className="w-full max-w-2xl mx-auto">
       {/* Title */}
       <h1
-        className="text-4xl md:text-5xl text-center mb-8"
+        className="text-4xl md:text-5xl text-center mb-8 animate-gradient-text bg-clip-text text-transparent"
         style={{
           fontFamily: '"Times New Roman", Times, serif',
-          color: 'var(--text-primary)',
+          backgroundImage: 'linear-gradient(90deg, #FFFFFF, #93C5FD, #3B82F6, #1D4ED8, #1E3A8A, #1D4ED8, #3B82F6, #93C5FD, #FFFFFF)',
+          backgroundSize: '200% auto',
         }}
       >
         Prompt to profit

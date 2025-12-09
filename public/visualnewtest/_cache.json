@@ -1,6 +1,6 @@
 {
-  "analyzedAt": "2025-12-07T22:43:13.536Z",
-  "imageHash": "3011999-1765146051496.563",
+  "analyzedAt": "2025-12-08T18:07:46.585Z",
+  "imageHash": "3011999-1765198866517.804",
   "inspiration": {
     "layout": {
       "heroStyle": "centered",
@@ -9,142 +9,127 @@
       "navStyle": "minimal"
     },
     "colorScheme": {
-      "dominantColor": "#FFD6A5",
+      "dominantColor": "#F26A4B",
       "accentColor": "#000000",
       "backgroundColor": "#FFFFFF",
-      "textColor": "#111111",
-      "backgroundStyle": "mixed"
+      "textColor": "#000000",
+      "backgroundStyle": "light"
     },
     "typography": {
       "headingStyle": "elegant-serif",
-      "headingWeight": "medium",
+      "headingWeight": "bold",
       "bodyFont": "sans-serif",
       "textDensity": "balanced"
     },
     "components": {
-      "buttonStyle": "rounded",
-      "cardStyle": "minimal",
+      "buttonStyle": "rounded-full",
+      "cardStyle": "flat",
       "imageStyle": "rounded"
     },
     "effects": {
-      "hasAnimations": true,
-      "hasShadows": true,
+      "hasAnimations": false,
+      "hasShadows": false,
       "hasGradients": true,
-      "hasGlassmorphism": true,
+      "hasGlassmorphism": false,
       "hasParallax": false,
-      "hasHoverEffects": true
+      "hasHoverEffects": false
     },
     "tailwindClasses": {
-      "hero": "flex flex-col items-center text-center pt-24 pb-0 px-4 bg-white",
-      "sections": "py-24 md:py-32 px-6 max-w-7xl mx-auto",
-      "cards": "bg-transparent p-6",
-      "buttons": "bg-black text-white px-6 py-3 rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors",
-      "headings": "font-serif text-4xl md:text-6xl text-gray-900 leading-tight mb-6",
-      "body": "font-sans text-lg text-gray-600 leading-relaxed"
+      "hero": "min-h-screen flex flex-col items-center justify-center py-20",
+      "sections": "py-16",
+      "cards": "bg-white rounded-lg shadow-md p-6",
+      "buttons": "bg-black text-white rounded-full px-6 py-3",
+      "headings": "text-4xl font-bold tracking-tight",
+      "body": "text-gray-700 leading-relaxed"
     },
     "sectionStructure": {
       "order": [
-        "navbar",
         "hero",
-        "social_proof",
-        "process_diagram",
-        "section_header",
-        "feature_on_demand",
-        "feature_personalization",
-        "feature_multilingual",
-        "feature_integrations",
+        "trusted_by",
+        "lead_capture",
+        "agent_capabilities",
+        "product_demos",
+        "multilingual_agents",
+        "crm_integration",
         "testimonials",
-        "bottom_cta",
+        "cta",
         "footer"
       ],
       "sections": {
-        "navbar": {
-          "layout": "split",
-          "hasImage": true,
-          "hasCards": false,
-          "description": "Minimal navbar with logo on left and 'Talk to us' button on right.",
-          "tailwindClasses": "flex justify-between items-center py-6 px-8 sticky top-0 bg-white/90 backdrop-blur-sm z-50"
-        },
         "hero": {
           "layout": "centered",
           "hasImage": true,
           "hasCards": false,
-          "description": "Centered serif headline, subhead, black CTA button, followed by a large dashboard mockup on a peach gradient background.",
-          "tailwindClasses": "flex flex-col items-center text-center pt-16"
+          "description": "Hero section with a headline, description, and a demo launch button. Includes an illustration of the product dashboard.",
+          "tailwindClasses": "min-h-screen flex flex-col items-center justify-center py-20"
         },
-        "social_proof": {
+        "trusted_by": {
           "layout": "logo-row",
           "hasImage": true,
           "hasCards": false,
-          "description": "Row of grayscale client logos with 'Trusted by' label.",
-          "tailwindClasses": "py-12 border-b border-transparent flex justify-center gap-12 grayscale opacity-60"
+          "description": "A row of logos of companies that trust Karumi.",
+          "tailwindClasses": "py-8 flex items-center justify-center space-x-8"
         },
-        "process_diagram": {
-          "layout": "centered",
-          "hasImage": true,
-          "hasCards": false,
-          "description": "Headline about intent, followed by a complex flowchart diagram illustrating the user journey.",
-          "tailwindClasses": "py-24 text-center"
-        },
-        "section_header": {
-          "layout": "centered",
-          "hasImage": false,
-          "hasCards": false,
-          "description": "Transition headline 'Don't demo like it is 1990' introducing the feature set.",
-          "tailwindClasses": "py-16 text-center"
-        },
-        "feature_on_demand": {
-          "layout": "split-left",
-          "hasImage": true,
-          "hasCards": false,
-          "description": "Text on left describing on-demand experience, UI mockup on right with peach background.",
-          "tailwindClasses": "grid grid-cols-1 md:grid-cols-2 gap-16 items-center py-20"
-        },
-        "feature_personalization": {
+        "lead_capture": {
           "layout": "split-right",
           "hasImage": true,
           "hasCards": false,
-          "description": "UI mockup grid of users on left, text describing personalization on right.",
-          "tailwindClasses": "grid grid-cols-1 md:grid-cols-2 gap-16 items-center py-20"
+          "description": "Section highlighting the ability to close leads with hyper-personalized demos. Includes a world map illustration.",
+          "tailwindClasses": "py-16 grid grid-cols-1 md:grid-cols-2 gap-8 items-center"
         },
-        "feature_multilingual": {
-          "layout": "split-left",
-          "hasImage": true,
-          "hasCards": false,
-          "description": "Text on left describing multilingual agents, world map visualization on right.",
-          "tailwindClasses": "grid grid-cols-1 md:grid-cols-2 gap-16 items-center py-20"
-        },
-        "feature_integrations": {
-          "layout": "full-width",
-          "hasImage": true,
-          "hasCards": false,
-          "description": "Headline 'Always in-sync with your CRM' with logos connected by dotted lines on a gradient background.",
-          "tailwindClasses": "py-24 bg-gradient-to-b from-orange-50/50 to-orange-100/50 rounded-3xl mx-4"
-        },
-        "testimonials": {
-          "layout": "grid-3",
-          "hasImage": true,
-          "hasCards": true,
-          "description": "Three column grid of testimonials with quotes and user avatars.",
-          "tailwindClasses": "grid grid-cols-1 md:grid-cols-3 gap-8 py-24 px-6"
-        },
-        "bottom_cta": {
+        "agent_capabilities": {
           "layout": "centered",
           "hasImage": false,
           "hasCards": false,
-          "description": "Large sunrise gradient effect at bottom with final CTA text.",
-          "tailwindClasses": "pt-32 pb-48 text-center bg-gradient-to-t from-orange-200 via-orange-100 to-white"
+          "description": "Section emphasizing the modern approach to demos.",
+          "tailwindClasses": "py-16 text-center"
         },
-        "footer": {
-          "layout": "multi-column",
+        "product_demos": {
+          "layout": "split-right",
           "hasImage": true,
           "hasCards": false,
-          "description": "4-column footer with logo, links, certifications, and copyright.",
-          "tailwindClasses": "py-16 border-t border-gray-100 text-sm text-gray-500"
+          "description": "Section showcasing on-demand product experience.",
+          "tailwindClasses": "py-16 grid grid-cols-1 md:grid-cols-2 gap-8 items-center"
+        },
+        "multilingual_agents": {
+          "layout": "split-left",
+          "hasImage": true,
+          "hasCards": false,
+          "description": "Section highlighting multilingual agent capabilities.",
+          "tailwindClasses": "py-16 grid grid-cols-1 md:grid-cols-2 gap-8 items-center"
+        },
+        "crm_integration": {
+          "layout": "split-right",
+          "hasImage": true,
+          "hasCards": false,
+          "description": "Section showcasing CRM integration.",
+          "tailwindClasses": "py-16 grid grid-cols-1 md:grid-cols-2 gap-8 items-center"
+        },
+        "testimonials": {
+          "layout": "grid-3",
+          "hasImage": false,
+          "hasCards": true,
+          "cardCount": 3,
+          "description": "Testimonials section with quotes and author information.",
+          "tailwindClasses": "py-16 grid grid-cols-1 md:grid-cols-3 gap-8"
+        },
+        "cta": {
+          "layout": "centered",
+          "hasImage": false,
+          "hasCards": false,
+          "description": "Call to action section to accelerate growth with AI-led demos.",
+          "tailwindClasses": "py-16 text-center"
+        },
+        "footer": {
+          "layout": "3-column",
+          "hasImage": true,
+          "hasCards": false,
+          "description": "Footer section with company information, legal links, and product links.",
+          "tailwindClasses": "py-8 bg-gray-100 text-gray-600"
         }
       }
     },
-    "overallVibe": "A sophisticated, high-end B2B SaaS aesthetic. It combines the trustworthiness of classic serif typography with the modern, approachable feel of soft peach/orange gradients and clean UI mockups. The design feels airy, premium, and human-centric.",
-    "designNotes": "The typography pairing is critical here: a high-contrast serif (like Playfair Display or similar) for headings paired with a clean geometric sans-serif for body text. The color palette relies heavily on a 'Sunset' gradient (peach to white). UI mockups are presented floating on these gradient backgrounds rather than inside hard-bordered containers."
+    "overallVibe": "Sophisticated and modern SaaS website with a clean design, elegant typography, and subtle gradients.",
+    "designNotes": "The design uses a consistent color palette, elegant typography, and clear calls to action. The use of illustrations and whitespace creates a professional and trustworthy feel."
   }
 }

@@ -82,18 +82,24 @@ export default function WorkspaceHydration({
           if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
             const artifact = payload.new as Artifact;
 
-            // Validate artifact data
+            // Validate artifact data - silently ignore invalid payloads (can happen during deletions)
             if (!artifact || !artifact.type || !artifact.data) {
-              console.error('[Realtime] Invalid artifact payload:', artifact);
               return;
             }
 
             // Validate artifact type
-            const validTypes: Array<'website_code' | 'identity' | 'ads' | 'market_research' | 'business_plan' | 'leads' | 'outreach' | 'first_week_plan' | 'crm'> = [
-              'website_code', 'identity', 'ads', 'market_research', 'business_plan', 'leads', 'outreach', 'first_week_plan', 'crm'
+            const validTypes: Array<'website_code' | 'identity' | 'ads' | 'market_research' | 'business_plan' | 'leads' | 'outreach' | 'first_week_plan' | 'crm' | 'lead_website'> = [
+              'website_code', 'identity', 'ads', 'market_research', 'business_plan', 'leads', 'outreach', 'first_week_plan', 'crm', 'lead_website'
             ];
             if (!validTypes.includes(artifact.type as any)) {
               console.error('[Realtime] Unknown artifact type:', artifact.type);
+              return;
+            }
+
+            // Lead websites are handled locally in LeadDetailWorkspace via direct fetch
+            // No need to update global store - just log and return
+            if (artifact.type === 'lead_website') {
+              console.log('[Realtime] lead_website update detected, handled locally in LeadDetailWorkspace');
               return;
             }
 

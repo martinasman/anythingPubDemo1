@@ -211,6 +211,21 @@ export type Lead = {
   priority?: 'high' | 'medium' | 'low';
   tags?: string[];
 
+  // Deal Value Tracking
+  dealValue?: number;
+  dealCurrency?: string; // Default 'USD'
+
+  // Website Generation Status
+  websiteStatus?: 'none' | 'generating' | 'ready' | 'sent' | 'viewed' | 'approved';
+
+  // Stripe Payment Integration
+  stripeCustomerId?: string;
+  stripePaymentLinkId?: string;
+  stripePaymentLinkUrl?: string;
+  stripePaymentStatus?: 'pending' | 'paid' | 'failed' | 'refunded';
+  paidAt?: string;
+  paidAmount?: number;
+
   // Generated Content References
   previewToken?: string;
   previewUrl?: string;
@@ -591,6 +606,18 @@ export type LeadRow = {
   preview_token: string | null;
   outreach_generated: boolean;
   outreach_data: Lead['outreachData'] | null;
+  // Deal Value Tracking
+  deal_value: number | null;
+  deal_currency: string | null;
+  // Website Generation Status
+  website_status: 'none' | 'generating' | 'ready' | 'sent' | 'viewed' | 'approved' | null;
+  // Stripe Payment Integration
+  stripe_customer_id: string | null;
+  stripe_payment_link_id: string | null;
+  stripe_payment_link_url: string | null;
+  stripe_payment_status: 'pending' | 'paid' | 'failed' | 'refunded' | null;
+  paid_at: string | null;
+  paid_amount: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -740,6 +767,18 @@ export function leadRowToLead(row: LeadRow): Lead {
     previewToken: row.preview_token || undefined,
     outreachGenerated: row.outreach_generated,
     outreachData: row.outreach_data || undefined,
+    // Deal Value Tracking
+    dealValue: row.deal_value || undefined,
+    dealCurrency: row.deal_currency || undefined,
+    // Website Generation Status
+    websiteStatus: row.website_status || undefined,
+    // Stripe Payment Integration
+    stripeCustomerId: row.stripe_customer_id || undefined,
+    stripePaymentLinkId: row.stripe_payment_link_id || undefined,
+    stripePaymentLinkUrl: row.stripe_payment_link_url || undefined,
+    stripePaymentStatus: row.stripe_payment_status || undefined,
+    paidAt: row.paid_at || undefined,
+    paidAmount: row.paid_amount || undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -779,6 +818,18 @@ export function leadToLeadRow(lead: Lead, projectId: string): Omit<LeadRow, 'id'
     preview_token: lead.previewToken || null,
     outreach_generated: lead.outreachGenerated || false,
     outreach_data: lead.outreachData || null,
+    // Deal Value Tracking
+    deal_value: lead.dealValue || null,
+    deal_currency: lead.dealCurrency || null,
+    // Website Generation Status
+    website_status: lead.websiteStatus || null,
+    // Stripe Payment Integration
+    stripe_customer_id: lead.stripeCustomerId || null,
+    stripe_payment_link_id: lead.stripePaymentLinkId || null,
+    stripe_payment_link_url: lead.stripePaymentLinkUrl || null,
+    stripe_payment_status: lead.stripePaymentStatus || null,
+    paid_at: lead.paidAt || null,
+    paid_amount: lead.paidAmount || null,
   };
 }
 

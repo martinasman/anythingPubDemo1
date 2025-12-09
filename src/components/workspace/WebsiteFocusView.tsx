@@ -30,7 +30,6 @@ export default function WebsiteFocusView() {
   } = useProjectStore();
   const { bgStyle, isDark } = useCanvasBackground();
   const [viewport, setViewport] = useState<Viewport>('desktop');
-  const [websitePreviewUrl, setWebsitePreviewUrl] = useState<string | null>(null);
   const [codeModalOpen, setCodeModalOpen] = useState(false);
   const [selectedFilePath, setSelectedFilePath] = useState<string>('/index.html');
   const [pageDropdownOpen, setPageDropdownOpen] = useState(false);
@@ -53,9 +52,24 @@ export default function WebsiteFocusView() {
   const textPrimary = isDark ? 'text-white' : 'text-zinc-900';
   const textSecondary = isDark ? 'text-zinc-400' : 'text-zinc-600';
 
+  // Stable version reference for effect dependencies (must be defined before memos that use it)
+  const websiteVersion = artifacts.website?.version ?? 0;
+
+  // Force refresh when version changes (fixes preview not updating after edits)
+  useEffect(() => {
+    console.log('[WebsiteFocusView] Version changed to:', websiteVersion);
+    if (websiteVersion > 0) {
+      // Force blob URL recreation by incrementing refresh key
+      setRefreshKey(prev => prev + 1);
+    }
+  }, [websiteVersion]);
+
   // Memoize file contents to prevent unnecessary recalculations
   const fileContents = useMemo(() => {
+    console.log('[WebsiteFocusView] fileContents memo recalculating, version:', websiteVersion);
+
     if (!artifacts.website?.files?.length) {
+      console.log('[WebsiteFocusView] fileContents: No files');
       return { htmlContent: null, cssContent: null, jsContent: null };
     }
 
@@ -70,12 +84,14 @@ export default function WebsiteFocusView() {
     const cssFile = files.find(f => f.path === '/styles.css');
     const jsFile = files.find(f => f.path === '/script.js');
 
+    console.log('[WebsiteFocusView] fileContents: HTML length:', htmlFile?.content?.length);
+
     return {
       htmlContent: htmlFile?.content || null,
       cssContent: cssFile?.content || null,
       jsContent: jsFile?.content || null,
     };
-  }, [artifacts.website?.files, selectedFilePath]);
+  }, [artifacts.website?.files, websiteVersion, selectedFilePath]);
 
   // Get list of HTML pages for the dropdown
   const htmlPages = useMemo(() => {
@@ -117,6 +133,51 @@ export default function WebsiteFocusView() {
   // Get current version number from artifacts
   const currentVersion = artifacts.website?.version || 1;
   const hasPreviousVersion = artifacts.website?.previous_data !== undefined && artifacts.website?.previous_data !== null;
+
+  // Navigation script to intercept link clicks and update page state
+  // This allows clicking nav links in the preview to work with our blob URL approach
+  const navigationScript = `
+<script data-nav-handler="true">
+(function() {
+  document.addEventListener('click', function(e) {
+    var link = e.target.closest('a');
+    if (!link || !link.href) return;
+
+    var href = link.getAttribute('href');
+    // Skip external links, anchors, and special protocols
+    if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:') || href.startsWith('http://') || href.startsWith('https://')) {
+      // For external http links, let them open in new tab
+      if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+        e.preventDefault();
+        window.open(href, '_blank');
+      }
+      return;
+    }
+
+    // Internal link - intercept and notify parent
+    e.preventDefault();
+
+    // Normalize path: /about → /about/index.html
+    var path = href;
+    if (path === '/') {
+      path = '/index.html';
+    } else if (!path.endsWith('.html')) {
+      // /about → /about/index.html
+      path = path.replace(/\\/$/, '') + '/index.html';
+    }
+
+    // Ensure path starts with /
+    if (!path.startsWith('/')) {
+      path = '/' + path;
+    }
+
+    window.parent.postMessage({
+      type: 'navigate-page',
+      path: path
+    }, '*');
+  }, true);
+})();
+</script>`;
 
   // Selection script to inject when in select mode
   // Supports selecting semantic sections (header, footer, section, nav) and individual elements
@@ -249,43 +310,69 @@ export default function WebsiteFocusView() {
 })();
 </script>`;
 
-  // Create iframe content from website HTML with proper cleanup
-  useEffect(() => {
+  // Create preview HTML directly (no blob URL race condition)
+  // Using useMemo instead of useEffect + state eliminates the async race condition
+  // that was causing the iframe to show stale/revoked blob URLs
+  const previewHtml = useMemo(() => {
+    console.log('[WebsiteFocusView] previewHtml memo, version:', websiteVersion, 'htmlLength:', fileContents.htmlContent?.length);
+
     if (!fileContents.htmlContent) {
-      setWebsitePreviewUrl(null);
-      return;
+      return null;
     }
 
-    let modifiedHtml = fileContents.htmlContent;
+    let html = fileContents.htmlContent;
 
     if (fileContents.cssContent) {
-      modifiedHtml = modifiedHtml.replace(
+      html = html.replace(
         '</head>',
         `<style>${fileContents.cssContent}</style></head>`
       );
     }
 
     if (fileContents.jsContent) {
-      modifiedHtml = modifiedHtml.replace(
+      html = html.replace(
         '</body>',
         `<script>${fileContents.jsContent}</script></body>`
       );
     }
 
+    // Always inject navigation script for multi-page support
+    html = html.replace('</body>', `${navigationScript}</body>`);
+
     // Inject selection script when in select mode
     if (isSelectMode) {
-      modifiedHtml = modifiedHtml.replace('</body>', `${selectionScript}</body>`);
+      html = html.replace('</body>', `${selectionScript}</body>`);
     }
 
-    const blob = new Blob([modifiedHtml], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    setWebsitePreviewUrl(url);
+    return html;
+  }, [fileContents.htmlContent, fileContents.cssContent, fileContents.jsContent, isSelectMode, websiteVersion, navigationScript]);
 
-    // CLEANUP: Revoke blob URL when file content changes or component unmounts
-    return () => {
-      URL.revokeObjectURL(url);
+  // Log when previewHtml changes (diagnostic)
+  useEffect(() => {
+    console.log('[WebsiteFocusView] *** previewHtml CHANGED ***');
+    console.log('[WebsiteFocusView] previewHtml length:', previewHtml?.length);
+    console.log('[WebsiteFocusView] previewHtml first 200 chars:', previewHtml?.substring(0, 200));
+  }, [previewHtml]);
+
+  // Listen for postMessage from iframe for page navigation
+  useEffect(() => {
+    const handleNavigate = (event: MessageEvent) => {
+      if (event.data?.type === 'navigate-page') {
+        const path = event.data.path;
+        console.log('[WebsiteFocusView] Navigation request to:', path);
+        // Check if the page exists in our artifact
+        const pageExists = htmlPages.some(p => p.path === path);
+        if (pageExists) {
+          setSelectedFilePath(path);
+        } else {
+          console.warn('[WebsiteFocusView] Page not found:', path);
+        }
+      }
     };
-  }, [fileContents.htmlContent, fileContents.cssContent, fileContents.jsContent, isSelectMode]);
+
+    window.addEventListener('message', handleNavigate);
+    return () => window.removeEventListener('message', handleNavigate);
+  }, [htmlPages]);
 
   // Listen for postMessage from iframe when element is selected
   useEffect(() => {
@@ -327,7 +414,7 @@ export default function WebsiteFocusView() {
   }, [isSelectMode, setSelectedElementSelector, setStoreElementInfo]);
 
   // Empty/Loading state
-  if (!websitePreviewUrl) {
+  if (!previewHtml) {
     const websiteStatus = toolStatuses.get('generate_website_files');
     const hasError = websiteStatus?.status === 'error';
     const errorMessage = websiteStatus?.errorMessage;
@@ -596,7 +683,13 @@ export default function WebsiteFocusView() {
 
         {/* Open in new tab */}
         <button
-          onClick={() => window.open(websitePreviewUrl, '_blank')}
+          onClick={() => {
+            if (previewHtml) {
+              const blob = new Blob([previewHtml], { type: 'text/html' });
+              const url = URL.createObjectURL(blob);
+              window.open(url, '_blank');
+            }
+          }}
           className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium ${isDark ? 'text-zinc-300 hover:text-white hover:bg-zinc-700' : 'text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200'} rounded-lg transition-colors`}
           title="Open in new tab"
         >
@@ -615,8 +708,8 @@ export default function WebsiteFocusView() {
           }}
         >
           <iframe
-            key={refreshKey}
-            src={websitePreviewUrl}
+            key={`preview-${refreshKey}-${websiteVersion}-${previewHtml?.length || 0}`}
+            srcDoc={previewHtml || ''}
             className="w-full border-0"
             style={{ height: '100vh', minHeight: '800px' }}
             sandbox="allow-same-origin allow-scripts"

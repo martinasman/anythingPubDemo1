@@ -459,9 +459,9 @@ export async function performMarketResearch(params: z.infer<typeof researchSchem
       businessModelResults,
       strategyResults
     ] = await Promise.all([
-      tvly.search(queries[0], { searchDepth: 'advanced', maxResults: 8, includeAnswer: true }),
-      tvly.search(queries[1], { searchDepth: 'advanced', maxResults: 5, includeAnswer: true }),
-      tvly.search(queries[2], { searchDepth: 'advanced', maxResults: 5, includeAnswer: true }),
+      tvly.search(queries[0], { searchDepth: 'basic', maxResults: 8, includeAnswer: true }),
+      tvly.search(queries[1], { searchDepth: 'basic', maxResults: 5, includeAnswer: true }),
+      tvly.search(queries[2], { searchDepth: 'basic', maxResults: 5, includeAnswer: true }),
       tvly.search(queries[3], { searchDepth: 'basic', maxResults: 5 }),
       tvly.search(queries[4], { searchDepth: 'basic', maxResults: 5 }),
       tvly.search(queries[5], { searchDepth: 'basic', maxResults: 5 }),

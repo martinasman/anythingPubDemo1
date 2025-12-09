@@ -7,13 +7,8 @@
 
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/utils/supabase/admin';
-import { getIndustryWebsiteStyle, getArchitectPrompt, detectIndustryKey } from '@/config/agentPrompts';
+import { getArchitectPrompt, detectIndustryKey } from '@/config/agentPrompts';
 import { extractWebsiteContent } from '@/lib/services/websiteAnalyzer';
-import { selectStyle, formatStyleName, type DesignStyle } from '@/lib/services/styleSelector';
-import { getIndustryContext } from '@/config/industryContext';
-import { analyzeBusinessPersonality, getDesignAdaptations } from '@/lib/services/businessAnalyzer';
-import { analyzeDesignFromUrl } from '@/lib/services/designReferences/analyzer';
-import type { DesignInspiration } from '@/lib/services/designReferences/types';
 import { nanoid } from 'nanoid';
 import type { LeadWebsiteArtifact } from '@/types/database';
 
@@ -57,7 +52,7 @@ export async function POST(
       const supabase = createAdminClient();
       const { id: leadId } = await params;
       const body = await request.json();
-      const { industry, businessName, projectId, websiteUrl, designReferenceUrl } = body;
+      const { industry, businessName, projectId, websiteUrl } = body;
 
       if (!leadId) {
         const errorData = formatSSE('error', { error: 'Lead ID is required', stage: currentStage });
@@ -90,105 +85,29 @@ export async function POST(
       // Emit validation complete
       await emitProgress('validation', 'Inputs validated successfully');
 
-      let selectedStyle: DesignStyle | null = null;
       let extractedContent = null;
       let sourceUrl = null;
 
-      // If websiteUrl provided, extract content and select style
+      // If websiteUrl provided, extract content for context
       if (websiteUrl) {
         currentStage = 'fetch';
         await emitProgress('fetch', 'Fetching website content...');
         sourceUrl = websiteUrl;
-        extractedContent = await extractWebsiteContent(websiteUrl);
-        await emitProgress('fetch', 'Content extracted successfully');
-
-        // Get recent styles to avoid repetition
-        const { data: artifact } = await supabase
-          .from('artifacts')
-          .select('*')
-          .eq('project_id', projectId)
-          .eq('type', 'lead_website')
-          .single();
-
-        const leadWebsites = artifact?.data?.websites?.filter((w: any) => w.leadId === leadId) || [];
-        const recentStyles = leadWebsites
-          .slice(0, 5)
-          .map((w: any) => w.designStyle)
-          .filter(Boolean);
-
-        // Select style based on extracted content and industry
-        currentStage = 'analysis';
-        await emitProgress('analysis', 'Analyzing website structure...');
-        selectedStyle = selectStyle({
-          leadId,
-          industry: industry || 'default',
-          sourceStructure: extractedContent.structure.layout,
-          recentStyles,
-        });
-        await emitProgress('analysis', `Style selected: ${selectedStyle ? formatStyleName(selectedStyle) : 'default'}`);
-      }
-
-      // Analyze design reference screenshot if provided
-      let designInspiration: DesignInspiration | null = null;
-      if (designReferenceUrl) {
-        console.log('[GenerateWebsite] Design reference URL received:', designReferenceUrl);
-        await emitProgress('analysis', 'Analyzing design reference...');
-
         try {
-          // First verify URL is accessible
-          const headCheck = await fetch(designReferenceUrl, { method: 'HEAD' });
-          if (!headCheck.ok) {
-            throw new Error(`Image URL not accessible: ${headCheck.status}`);
-          }
-          console.log('[GenerateWebsite] Image URL accessible, proceeding with analysis...');
-
-          designInspiration = await analyzeDesignFromUrl(designReferenceUrl);
-
-          const sectionCount = designInspiration.sectionStructure?.order?.length || 0;
-          const primaryColor = designInspiration.colorScheme?.dominantColor || 'default';
-          const heroStyle = designInspiration.layout?.heroStyle || 'centered';
-
-          // Log full success details
-          console.log('[GenerateWebsite] Design analysis SUCCESS:', JSON.stringify({
-            hasColors: !!designInspiration.colorScheme,
-            hasSections: !!designInspiration.sectionStructure,
-            sectionOrder: designInspiration.sectionStructure?.order,
-            primaryColor: designInspiration.colorScheme?.dominantColor,
-            accentColor: designInspiration.colorScheme?.accentColor,
-          }));
-
-          await emitProgress('analysis', `Design analyzed: ${sectionCount} sections, ${primaryColor}, ${heroStyle} hero`);
+          extractedContent = await extractWebsiteContent(websiteUrl);
+          await emitProgress('fetch', 'Content extracted successfully');
         } catch (error) {
-          // LOG THE ACTUAL ERROR - don't just warn
-          console.error('[GenerateWebsite] DESIGN ANALYSIS FAILED:', error);
-          console.error('[GenerateWebsite] Error details:', {
-            message: error instanceof Error ? error.message : 'Unknown',
-            stack: error instanceof Error ? error.stack : undefined,
-            url: designReferenceUrl,
-          });
-          const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-          await emitProgress('analysis', `Design analysis failed: ${errorMsg.slice(0, 50)}`);
-          // Continue without design reference - designInspiration stays null
+          console.warn('[GenerateWebsite] Failed to extract content:', error);
+          await emitProgress('fetch', 'Could not extract content, generating fresh');
         }
       }
 
       // Generate preview token
       const previewToken = nanoid(21);
 
-      // Build the prompt for website generation
-      const prompt = buildWebsitePrompt(
-        businessName,
-        industry,
-        selectedStyle,
-        extractedContent,
-        designInspiration
-      );
-
-      // Log which mode we're using
-      console.log('[GenerateWebsite] Prompt mode:', designInspiration ? 'DESIGN REFERENCE' : 'STANDARD');
-      if (designInspiration) {
-        console.log('[GenerateWebsite] Using design reference with', designInspiration.sectionStructure?.order?.length || 0, 'sections');
-      }
+      // Build simple prompt with extracted content as context
+      const prompt = buildWebsitePrompt(businessName, industry, extractedContent);
+      console.log('[GenerateWebsite] Generating website for:', businessName);
 
       // Generate website using AI
       currentStage = 'generation';
@@ -214,7 +133,6 @@ export async function POST(
         previewToken,
         files: websiteFiles,
         expiresAt: expiresAt.toISOString(),
-        designStyle: selectedStyle,
         sourceUrl: sourceUrl,
       };
 
@@ -302,7 +220,6 @@ export async function POST(
         previewToken,
         previewUrl,
         expiresAt: expiresAt.toISOString(),
-        designStyle: selectedStyle ? formatStyleName(selectedStyle) : null,
       });
       await writer.write(encoder.encode(successData));
     } catch (error) {
@@ -346,237 +263,57 @@ export async function POST(
 function buildWebsitePrompt(
   businessName: string,
   industry: string,
-  forcedStyle?: DesignStyle | null,
-  extractedContent?: any,
-  designInspiration?: DesignInspiration | null
+  extractedContent?: any
 ): string {
-  let prompt = `Generate a STUNNING landing page for: ${businessName}\n`;
+  let prompt = `Create a beautiful, modern website for this business.
 
-  // ============================================================
-  // CRITICAL: If design reference provided, it takes COMPLETE PRIORITY
-  // Skip all industry context and use the reference structure exactly
-  // ============================================================
-  if (designInspiration) {
-    prompt += `
-===== MANDATORY DESIGN REFERENCE - YOU MUST FOLLOW THIS EXACTLY =====
-
-⚠️ CRITICAL OVERRIDE: You MUST follow this design reference EXACTLY.
-IGNORE all generic industry styles. This reference is BINDING and non-negotiable.
-The uploaded screenshot defines the EXACT structure you must replicate.
-
-EXACT SECTION ORDER (create these sections in this EXACT order):
-${designInspiration.sectionStructure?.order?.map((s, i) => `${i + 1}. ${s}`).join('\n') || '1. hero\n2. features\n3. testimonials\n4. cta\n5. footer'}
-
-EXACT COLOR SCHEME (use these hex codes - DO NOT use other colors):
-- Primary Color: ${designInspiration.colorScheme?.dominantColor || '#000000'}
-- Accent Color: ${designInspiration.colorScheme?.accentColor || '#3B82F6'}
-- Background: ${designInspiration.colorScheme?.backgroundColor || '#FFFFFF'}
-- Text Color: ${designInspiration.colorScheme?.textColor || '#111111'}
-
-EXACT LAYOUT REQUIREMENTS:
-- Hero Style: ${designInspiration.layout?.heroStyle || 'centered'}
-- Grid Pattern: ${designInspiration.layout?.gridPattern || 'single-column'}
-- Section Spacing: ${designInspiration.layout?.sectionSpacing || 'generous'}
-- Navigation: ${designInspiration.layout?.navStyle || 'minimal'}
-
-EXACT COMPONENT STYLES:
-- Buttons: ${designInspiration.components?.buttonStyle || 'rounded'} style
-- Cards: ${designInspiration.components?.cardStyle || 'minimal'} style
-- Images: ${designInspiration.components?.imageStyle || 'rounded'} style
-
-EXACT TYPOGRAPHY:
-- Headings: ${designInspiration.typography?.headingStyle || 'bold-sans'}, weight ${designInspiration.typography?.headingWeight || 'bold'}
-- Body: ${designInspiration.typography?.bodyFont || 'sans-serif'}
-
-SECTION-BY-SECTION BLUEPRINT (replicate each section exactly):
-${Object.entries(designInspiration.sectionStructure?.sections || {}).map(([name, section]) =>
-  `### ${name.toUpperCase()}
-   - Layout: ${section.layout}
-   - Has Image: ${section.hasImage ? 'YES - include an image' : 'NO'}
-   - Has Cards: ${section.hasCards ? `YES - exactly ${section.cardCount || 3} cards` : 'NO'}
-   - Description: ${section.description}
-   - Tailwind Classes: ${section.tailwindClasses}`
-).join('\n\n')}
-
-TAILWIND CLASSES TO COPY EXACTLY:
-- Hero: ${designInspiration.tailwindClasses?.hero || 'min-h-screen flex items-center justify-center'}
-- Sections: ${designInspiration.tailwindClasses?.sections || 'py-24 px-6'}
-- Cards: ${designInspiration.tailwindClasses?.cards || 'p-6 rounded-xl'}
-- Buttons: ${designInspiration.tailwindClasses?.buttons || 'px-6 py-3 rounded-lg'}
-- Headings: ${designInspiration.tailwindClasses?.headings || 'text-4xl font-bold'}
-- Body Text: ${designInspiration.tailwindClasses?.body || 'text-lg text-gray-600'}
-
-DESIGN VIBE TO MATCH: ${designInspiration.overallVibe || 'Modern and professional'}
-${designInspiration.designNotes ? `\nDESIGN NOTES: ${designInspiration.designNotes}` : ''}
-
-===== END MANDATORY DESIGN REFERENCE =====
+===== BUSINESS CONTEXT =====
+Business Name: ${businessName}
+Industry: ${industry || 'General Business'}
 `;
 
-    // Add extracted content for TEXT/IMAGES only (not structure)
-    if (extractedContent?.content) {
-      prompt += `
-===== CONTENT TO USE (fill the sections above with this content) =====
-Use this content to populate the sections. DO NOT change the structure from above.
-
-Business Name: ${extractedContent.content.businessName || businessName}
+  // Add extracted content if available
+  if (extractedContent?.content) {
+    prompt += `
+===== CONTENT FROM THEIR CURRENT WEBSITE (use this text) =====
 ${extractedContent.content.headline ? `Headline: ${extractedContent.content.headline}` : ''}
 ${extractedContent.content.tagline ? `Tagline: ${extractedContent.content.tagline}` : ''}
-${extractedContent.content.headings?.length > 0 ? `Key Headings: ${extractedContent.content.headings.join(' | ')}` : ''}
-${extractedContent.content.paragraphs?.length > 0 ? `Content:\n${extractedContent.content.paragraphs.slice(0, 10).join('\n\n')}` : ''}
+${extractedContent.content.headings?.length > 0 ? `\nKey Headings:\n${extractedContent.content.headings.map((h: string) => `- ${h}`).join('\n')}` : ''}
+${extractedContent.content.paragraphs?.length > 0 ? `\nContent:\n${extractedContent.content.paragraphs.slice(0, 15).join('\n\n')}` : ''}
 `;
 
-      // Add images if available
-      if (extractedContent.images && extractedContent.images.length > 0) {
-        prompt += `\nAvailable Images (use these):`;
-        extractedContent.images.slice(0, 15).forEach((img: string, index: number) => {
-          prompt += `\n${index + 1}. ${img}`;
-        });
-      }
-    }
-
-    // Add output requirements and return early - skip all industry context
-    prompt += `
-
-===== CRITICAL REQUIREMENTS =====
-1. Follow the MANDATORY DESIGN REFERENCE above EXACTLY
-2. Use the colors, layout, and section structure from the reference
-3. Fill in content from the extracted website or generate appropriate placeholder
-4. Mobile-responsive design using Tailwind CSS CDN
-5. Include smooth animations and hover effects
-6. Add a footer with "Website Preview - Powered by [Your Agency]"
-
-===== OUTPUT FORMAT =====
-Return ONLY a valid JSON object:
-{
-  "files": [
-    {
-      "path": "/index.html",
-      "content": "<!DOCTYPE html>...",
-      "type": "html"
-    }
-  ]
-}
-
-No markdown, no explanations - ONLY the JSON.`;
-
-    console.log('[BuildPrompt] Using DESIGN REFERENCE mode - skipping industry context');
-    return prompt;
-  }
-
-  // ============================================================
-  // STANDARD FLOW: No design reference - use industry context
-  // ============================================================
-
-  // Get industry context and personality for personalized design
-  const industryContext = getIndustryContext(industry);
-  const personality = analyzeBusinessPersonality(industry);
-  const designAdaptations = getDesignAdaptations(personality);
-
-  prompt += `\nINDUSTRY: ${industry}`;
-
-  // Add industry context to make the design less generic
-  prompt += `\n\n===== INDUSTRY CONTEXT =====
-Industry: ${industryContext.industry}
-Target Tone: ${industryContext.tone.join(', ')}
-Key Content Themes: ${industryContext.contentThemes.join(', ')}
-
-Copywriting Guidelines:
-${industryContext.copyGuidelines}
-
-Visual Emphasis:
-${industryContext.visualEmphasis}
-
-Recommended CTAs:
-${industryContext.ctaLanguage.map((cta, i) => `${i + 1}. "${cta}"`).join('\n')}
-
-Trust Signals to Include:
-${industryContext.trustSignals.join(', ')}
-
-Section Priorities:
-${industryContext.sectionPriorities.map((section, i) => `${i + 1}. ${section}`).join('\n')}`;
-
-  // Add business personality context
-  prompt += `\n\n===== BUSINESS PERSONALITY =====
-Tone: ${personality.tone}
-Sophistication Level: ${personality.sophistication}
-Target Audience: ${personality.targetAudience}
-Price Position: ${personality.pricePosition}
-
-Design Recommendations:
-- Color Scheme: ${designAdaptations.colorScheme}
-- Typography: ${designAdaptations.typography}
-- Spacing: ${designAdaptations.spacing}
-- Imagery Style: ${designAdaptations.imagery}`;
-
-  // If we have a forced style from smart selection
-  if (forcedStyle) {
-    prompt += `\n\nFORCED_STYLE: ${forcedStyle}`;
-  }
-
-  // If we have extracted content from existing website
-  if (extractedContent && extractedContent.content) {
-    prompt += `\n\n===== EXTRACTED_CONTENT FROM EXISTING WEBSITE =====`;
-
-    if (extractedContent.content.headline) {
-      prompt += `\nHeadline: ${extractedContent.content.headline}`;
-    }
-    if (extractedContent.content.tagline) {
-      prompt += `\nTagline: ${extractedContent.content.tagline}`;
-    }
-    if (extractedContent.content.headings.length > 0) {
-      prompt += `\nKey Headings: ${extractedContent.content.headings.join(' | ')}`;
-    }
-    if (extractedContent.content.paragraphs.length > 0) {
-      prompt += `\nContent: ${extractedContent.content.paragraphs.join('\n\n')}`;
-    }
-    if (extractedContent.colors.primary) {
-      prompt += `\n\nColor Preferences:`;
-      if (extractedContent.colors.primary) prompt += `\n- Primary: ${extractedContent.colors.primary}`;
-      if (extractedContent.colors.secondary) prompt += `\n- Secondary: ${extractedContent.colors.secondary}`;
-      if (extractedContent.colors.accent) prompt += `\n- Accent: ${extractedContent.colors.accent}`;
-    }
-
-    // Add extracted images to prompt
+    // Add images if available
     if (extractedContent.images && extractedContent.images.length > 0) {
-      prompt += `\n\nAvailable Real Images (${extractedContent.images.length} from original website):`;
-      extractedContent.images.forEach((img: string, index: number) => {
-        prompt += `\n${index + 1}. ${img}`;
+      prompt += `\nAvailable Images (use these real images from their site):\n`;
+      extractedContent.images.slice(0, 10).forEach((img: string, index: number) => {
+        prompt += `${index + 1}. ${img}\n`;
       });
     }
 
-    prompt += `\n\nPRESERVE this information in the new design while modernizing and improving clarity.`;
+    // Add colors if extracted
+    if (extractedContent.colors?.primary) {
+      prompt += `\nBrand Colors:\n`;
+      if (extractedContent.colors.primary) prompt += `- Primary: ${extractedContent.colors.primary}\n`;
+      if (extractedContent.colors.secondary) prompt += `- Secondary: ${extractedContent.colors.secondary}\n`;
+      if (extractedContent.colors.accent) prompt += `- Accent: ${extractedContent.colors.accent}\n`;
+    }
   }
 
-  // Use industry-based style selection (only when no design reference)
-  if (!forcedStyle) {
-    const industryStyle = getIndustryWebsiteStyle(industry || 'default');
-    prompt += `\n\n===== STYLE DIRECTIVE =====
-Design Style: ${industryStyle.style}
-Color Scheme: ${industryStyle.colorScheme}
-Typography: ${industryStyle.typography}
-Imagery Guidelines: ${industryStyle.imagery}
-CTA Style: ${industryStyle.ctaStyle}
+  prompt += `
+===== YOUR TASK =====
+Create a stunning, modern website using the content above.
 
-===== SECTIONS TO INCLUDE =====
-${industryStyle.sections.map((s, i) => `${i + 1}. ${s}`).join('\n')}`;
-  }
+You have COMPLETE CREATIVE FREEDOM:
+- Design any layout that fits this business
+- Choose sections that make sense for them
+- Use modern design trends (2024/2025)
+- Make it look professional and impressive
 
-  // Build image usage requirements based on extracted content
-  const imageRequirements = extractedContent && extractedContent.images && extractedContent.images.length > 0
-    ? `   - FIRST CHOICE: Use the ${extractedContent.images.length} real images provided above
-   - Select the most appropriate image for each section (hero, features, gallery, etc.)
-   - Real images should be used in their original URLs - do NOT modify them
-   - If you need more images than provided, use https://placehold.co for additional ones`
-    : `   - Use placeholder images from https://placehold.co (e.g., https://placehold.co/600x400/1a1a1a/white?text=Hero+Image)`;
-
-  prompt += `\n\n===== CRITICAL REQUIREMENTS =====
-1. IMAGE USAGE PRIORITY:
-${imageRequirements}
-2. Include realistic placeholder content that matches the industry
-3. Mobile-responsive design using Tailwind CSS CDN
-4. Include smooth animations and hover effects
-5. Professional look that would impress a business owner
-6. Add a footer with "Website Preview - Powered by [Your Agency]"
+TECHNICAL REQUIREMENTS:
+- Use Tailwind CSS CDN
+- Mobile-responsive design
+- Smooth animations and hover effects
+- Professional typography
 
 ===== OUTPUT FORMAT =====
 Return ONLY a valid JSON object:
@@ -592,7 +329,6 @@ Return ONLY a valid JSON object:
 
 No markdown, no explanations - ONLY the JSON.`;
 
-  console.log('[BuildPrompt] Using STANDARD mode with industry context');
   return prompt;
 }
 

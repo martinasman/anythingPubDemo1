@@ -60,10 +60,12 @@ export async function generateWebsiteFiles(params: z.infer<typeof codeGenSchema>
   marketResearch?: any;
   mode?: 'html' | 'nextjs';
   imageContext?: ImageContext;
+  leadId?: string; // Optional lead ID for lead website generation
+  onProgress?: (stage: string, message: string) => Promise<void>; // Progress callback for streaming updates
 }) {
-  const { mode = 'html' } = params;
+  const { mode = 'html', onProgress } = params;
 
-  console.log('[Code Tool] Generating ' + mode + ' app');
+  console.log('[Code Tool] Generating ' + mode + ' app', params.leadId ? `for lead: ${params.leadId}` : '');
 
   if (mode === 'nextjs') {
     return await generateFullStackApp(params);
@@ -80,23 +82,31 @@ async function generateHTMLSite(params: z.infer<typeof codeGenSchema> & {
   modelId?: string;
   marketResearch?: any;
   imageContext?: ImageContext;
+  leadId?: string;
+  onProgress?: (stage: string, message: string) => Promise<void>;
 }) {
-  const { businessDescription, identity, projectId, modelId, marketResearch, imageContext } = params;
+  const { businessDescription, identity, projectId, modelId, marketResearch, imageContext, leadId, onProgress } = params;
 
   try {
+    // Emit initial progress
+    await onProgress?.('analyzing', 'Analyzing business context...');
+
     // Initialize OpenRouter client
     const openrouter = createOpenRouter({
       apiKey: process.env.OPENROUTER_API_KEY!,
     });
 
-    // Always use Gemini 3 Pro for best website generation
-    const selectedModel = 'google/gemini-3-pro-preview';
+    // Use user-selected model or default to Claude Sonnet
+    const selectedModel = modelId || 'anthropic/claude-sonnet-4';
     console.log('[Code Tool] Using model:', selectedModel);
 
     // Get industry context for personalized website generation
     const industryContext = getIndustryContext(businessDescription);
     const personality = analyzeBusinessPersonality(businessDescription);
     const designAdaptations = getDesignAdaptations(personality);
+
+    // Emit progress for design phase
+    await onProgress?.('designing', 'Creating design system...');
 
     // Get industry-specific architect prompt
     const industryKey = detectIndustryKey(businessDescription);
@@ -214,23 +224,76 @@ Note: Generate appropriate colors and branding based on the business description
 `
 }
 
+===== DESIGN QUALITY MANDATE (CRITICAL) =====
+
+Create a website that feels PREMIUM, UNIQUE, and COHESIVE - not generic or template-like.
+
+TYPOGRAPHY - Make it INTERESTING:
+- DO NOT default to Inter or basic sans-serif if no font specified
+- Choose fonts with CHARACTER that match the business personality
+- Pair fonts thoughtfully (serif headline + sans body, or geometric throughout)
+
+COLORS - Make them UNIQUE:
+- DO NOT use generic blue (#3B82F6) or gray palettes
+- Create a MEMORABLE, INTENTIONAL color scheme
+- Use unexpected accent colors that still feel cohesive
+- Add subtle gradients for depth and richness
+
+OVERALL VIBE:
+- Modern but WARM - like a high-end home, not a cold office
+- Every element should feel like it BELONGS
+- Consistent border-radius, shadow depth, spacing rhythm
+- Subtle depth with shadows, gradients, textures
+- Micro-interactions that feel delightful
+
 ===== YOUR TASK =====
 
 Generate a stunning, production-ready landing page with SEPARATE HTML, CSS, and JavaScript files.
 
 CRITICAL REQUIREMENTS:
 1. Use Tailwind CSS CDN (v3.4+) for base styling
-2. Include Google Fonts: ${identity?.font || 'Inter'}
+2. Include Google Fonts: ${identity?.font || 'Choose a font with CHARACTER - NOT Inter'}
 3. Mobile-first responsive design
 4. Semantic HTML5 structure
 5. SEO-optimized meta tags
 6. Accessibility features (ARIA labels)
 
-SECTIONS TO INCLUDE:
-1. Hero with bold headline, ${identity?.tagline ? `tagline: "${identity.tagline}"` : 'compelling subheadline'}, and CTA
-2. Features/Benefits in Bento grid layout (3-6 features)
-3. Social proof or testimonials
-4. Final CTA section
+⚠️ WEBSITE STRUCTURE - DEFAULT TO MULTI-PAGE ⚠️
+Generate MULTIPLE PAGES by default for most businesses.
+
+DEFAULT: 4-PAGE WEBSITE
+Unless the business is extremely simple, generate ALL of these pages:
+1. /index.html - Home page with hero, key value props, main CTA
+2. /about.html - About the business, story, team, mission
+3. /services.html - Detailed services/offerings breakdown
+4. /contact.html - Contact form, location map, business hours
+
+ONLY use single-page landing for these specific cases:
+- Food trucks / street vendors
+- Single product launches
+- Event announcements
+- Very simple local shops (1-2 services only)
+
+NAVIGATION (REQUIRED FOR ALL MULTI-PAGE SITES):
+- Include a consistent navigation bar on EVERY page
+- Use relative paths for links: href="/about.html"
+- Navigation should link to: /, /about.html, /services.html, /contact.html
+- Current page should be visually indicated in the nav
+- Include mobile hamburger menu
+
+OUTPUT FORMAT (4-page default):
+{
+  "files": [
+    { "path": "/index.html", "content": "...", "type": "html" },
+    { "path": "/about.html", "content": "...", "type": "html" },
+    { "path": "/services.html", "content": "...", "type": "html" },
+    { "path": "/contact.html", "content": "...", "type": "html" },
+    { "path": "/styles.css", "content": "...", "type": "css" },
+    { "path": "/script.js", "content": "...", "type": "javascript" }
+  ]
+}
+
+IMPORTANT: Default to 4 pages. Only create a single page if the business is VERY simple.
 
 CONTACT FORM (CRITICAL - MUST INCLUDE):
 Include a contact form in your CTA section with these exact fields:
@@ -292,27 +355,33 @@ Reference URLs (for style analysis only):
 ${imageContext.referenceImages.map(img => `- ${img.url}`).join('\n')}
 ` : ''}
 
-Return EXACTLY 3 files in this JSON format (NO markdown, NO explanations):
+Return files in this JSON format (NO markdown, NO explanations):
 
+For SINGLE PAGE websites, return 3 files:
 {
   "files": [
-    {
-      "path": "/index.html",
-      "content": "<!DOCTYPE html>...",
-      "type": "html"
-    },
-    {
-      "path": "/styles.css",
-      "content": "/* Custom CSS */...",
-      "type": "css"
-    },
-    {
-      "path": "/script.js",
-      "content": "// Interactive JavaScript...",
-      "type": "javascript"
-    }
+    { "path": "/index.html", "content": "...", "type": "html" },
+    { "path": "/styles.css", "content": "...", "type": "css" },
+    { "path": "/script.js", "content": "...", "type": "js" }
   ]
-}`;
+}
+
+For MULTI-PAGE websites, return additional HTML files:
+{
+  "files": [
+    { "path": "/index.html", "content": "...", "type": "html" },
+    { "path": "/about/index.html", "content": "...", "type": "html" },
+    { "path": "/services/index.html", "content": "...", "type": "html" },
+    { "path": "/contact/index.html", "content": "...", "type": "html" },
+    { "path": "/styles.css", "content": "...", "type": "css" },
+    { "path": "/script.js", "content": "...", "type": "js" }
+  ]
+}
+
+CRITICAL: Use /page/index.html format (not /page.html) for all subpages.`;
+
+    // Emit progress before AI generation
+    await onProgress?.('generating', 'Building website pages...');
 
     // Generate the code using LLM
     const { text } = await generateText({
@@ -320,6 +389,9 @@ Return EXACTLY 3 files in this JSON format (NO markdown, NO explanations):
       prompt,
       temperature: 0.7,
     });
+
+    // Emit progress for parsing phase
+    await onProgress?.('processing', 'Processing generated code...');
 
     // Parse the LLM response
     let websiteData: WebsiteArtifact;
@@ -399,11 +471,98 @@ document.querySelectorAll('form').forEach(form => {
       return { ...file, content };
     });
 
+    // Emit progress for saving phase
+    await onProgress?.('saving', 'Saving website...');
+
     // Save to Supabase with UPSERT for updates
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     );
+
+    // If leadId is provided, save to lead_website artifact instead
+    if (leadId) {
+      console.log('[Code Tool] Saving to lead_website for lead:', leadId);
+
+      // Generate a preview token for the lead website
+      const { nanoid } = await import('nanoid');
+      const previewToken = nanoid(21);
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 days
+
+      const leadWebsiteData = {
+        leadId,
+        leadName: identity?.name || businessDescription.slice(0, 50),
+        previewToken,
+        files: websiteData.files,
+        expiresAt,
+      };
+
+      // Fetch existing lead_website artifact or create new
+      const { data: existingArtifact } = await (supabase
+        .from('artifacts') as any)
+        .select('*')
+        .eq('project_id', projectId)
+        .eq('type', 'lead_website')
+        .single();
+
+      const existingWebsites = existingArtifact?.data?.websites || [];
+
+      // Add or replace website for this lead
+      const updatedWebsites = [
+        ...existingWebsites.filter((w: any) => w.leadId !== leadId),
+        leadWebsiteData
+      ];
+
+      const { error: leadError } = await (supabase
+        .from('artifacts') as any)
+        .upsert(
+          {
+            project_id: projectId,
+            type: 'lead_website',
+            data: { websites: updatedWebsites },
+            version: 1,
+          },
+          {
+            onConflict: 'project_id,type',
+          }
+        );
+
+      if (leadError) {
+        console.error('Failed to save lead website artifact:', leadError);
+        throw new Error('Failed to save lead website');
+      }
+
+      // Also update the leads artifact with the preview token
+      const { data: leadsArtifact } = await (supabase
+        .from('artifacts') as any)
+        .select('*')
+        .eq('project_id', projectId)
+        .eq('type', 'leads')
+        .single();
+
+      if (leadsArtifact) {
+        const updatedLeads = leadsArtifact.data?.leads?.map((lead: any) =>
+          lead.id === leadId ? { ...lead, previewToken } : lead
+        );
+
+        await (supabase
+          .from('artifacts') as any)
+          .update({
+            data: { ...leadsArtifact.data, leads: updatedLeads },
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', leadsArtifact.id);
+      }
+
+      return {
+        success: true,
+        previewToken,
+        previewUrl: `/preview/${previewToken}`,
+        summary: `🏗️ Generated lead website with ${websiteData.files.length} files`,
+      };
+    }
+
+    // Standard website_code save (for main project website)
     const { data: artifact, error } = await (supabase
       .from('artifacts') as any)
       .upsert(
