@@ -481,21 +481,33 @@ export async function generateLeads(params: z.infer<typeof leadsSchema> & { proj
       priority: lead.priority,
     }));
 
-    // First, delete existing leads for this project (fresh search)
-    await supabase
+    // Get existing leads to avoid duplicates (append, don't replace)
+    const { data: existingLeads } = await supabase
       .from('leads')
-      .delete()
+      .select('company_name, address')
       .eq('project_id', projectId);
 
-    // Insert new leads
-    const { error: insertError } = await supabase
-      .from('leads')
-      .insert(leadsToInsert);
+    const existingSet = new Set(
+      existingLeads?.map(l => `${l.company_name?.toLowerCase()}|${l.address?.toLowerCase() || ''}`) || []
+    );
 
-    if (insertError) {
-      console.error('[Leads] Failed to insert leads:', insertError);
-      // Continue anyway - we'll still show results
+    // Filter out duplicates - only insert truly new leads
+    const newLeadsToInsert = leadsToInsert.filter(
+      l => !existingSet.has(`${l.company_name?.toLowerCase()}|${l.address?.toLowerCase() || ''}`)
+    );
+
+    if (newLeadsToInsert.length > 0) {
+      const { error: insertError } = await supabase
+        .from('leads')
+        .insert(newLeadsToInsert);
+
+      if (insertError) {
+        console.error('[Leads] Failed to insert leads:', insertError);
+        // Continue anyway - we'll still show results
+      }
     }
+
+    console.log(`[Leads] Added ${newLeadsToInsert.length} new leads (${leadsToInsert.length - newLeadsToInsert.length} duplicates skipped)`);
 
     // 6. Also save to artifacts for backwards compatibility
     const highPriorityCount = sortedLeads.filter(l => l.score >= 70).length;

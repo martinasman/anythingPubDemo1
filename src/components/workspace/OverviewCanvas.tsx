@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useProjectStore } from '@/store/projectStore';
-import { Globe, Users, Check, Paintbrush, Image } from 'lucide-react';
+import { Globe, Users, Check, Paintbrush, Image, Crown } from 'lucide-react';
 import { useCanvasBackground, backgrounds } from '@/hooks/useCanvasBackground';
+import { CustomerCard, type Customer } from './CustomerCard';
 
 export default function OverviewCanvas() {
   const { setCanvasState, setWorkspaceView, artifacts } = useProjectStore();
@@ -65,6 +66,18 @@ export default function OverviewCanvas() {
     return () => URL.revokeObjectURL(url);
   }, [artifacts.website]);
 
+  // Get customers from CRM artifact (converted leads)
+  const customers: Customer[] = artifacts.crm?.clients?.map((client) => ({
+    id: client.id,
+    company_name: client.companyName || 'Unknown Company',
+    website: undefined, // Not stored in CRM artifact clients array
+    contact_name: client.primaryContact?.name,
+    email: client.primaryContact?.email,
+    lifetime_value: client.financialMetrics?.lifetimeValue || 0,
+    status: client.status === 'active' ? 'active' : client.status === 'paused' ? 'paused' : client.status === 'churned' ? 'churned' : 'active',
+    converted_at: client.lastActivityDate,
+  })) || [];
+
   return (
     <div
       className="relative h-full overflow-auto flex items-center justify-center transition-all duration-300 rounded-tl-2xl"
@@ -123,19 +136,20 @@ export default function OverviewCanvas() {
         )}
       </div>
 
-      {/* Grid Layout - Two cards: Website and Leads */}
-      <div className="grid grid-cols-2 gap-4 p-6" style={{ maxWidth: '800px' }}>
+      {/* Grid Layout - Three cards: Website, Leads, and Customers */}
+      <div className="grid grid-cols-3 gap-4 p-6" style={{ maxWidth: '1200px' }}>
 
-        {/* Website Card - Just the preview */}
+        {/* Website Card - Large preview */}
         <div
-          className={`col-span-1 rounded-2xl cursor-pointer transition-all hover:scale-[1.02] min-h-[300px] overflow-hidden ${cardBorder}`}
+          className={`col-span-1 rounded-2xl cursor-pointer transition-all hover:scale-[1.02] overflow-hidden ${cardBorder}`}
+          style={{ minHeight: '350px', aspectRatio: '16/10' }}
           onClick={() => {
             setCanvasState({ type: 'detail', view: 'website' });
             setWorkspaceView('SITE');
           }}
         >
           {/* Preview fills entire card */}
-          <div className="relative w-full h-full min-h-[300px] bg-white">
+          <div className="relative w-full h-full bg-white">
             {previewUrl ? (
               <iframe
                 src={previewUrl}
@@ -144,40 +158,121 @@ export default function OverviewCanvas() {
               />
             ) : (
               <div className="absolute inset-0 flex items-center justify-center bg-zinc-100">
-                <Globe className={`w-8 h-8 ${iconColor}`} />
+                <Globe className={`w-10 h-10 ${iconColor}`} />
               </div>
             )}
+            {/* Label overlay */}
+            <div className="absolute bottom-0 left-0 right-0 px-4 py-3 bg-gradient-to-t from-black/60 to-transparent">
+              <h3 className="text-white text-sm font-medium">Your Website</h3>
+            </div>
           </div>
         </div>
 
         {/* CRM/Leads Card */}
         <div
-          className={`col-span-1 ${cardBg} ${cardBorder} rounded-2xl p-6 cursor-pointer transition-all hover:scale-[1.02] min-h-[300px] flex flex-col`}
+          className={`col-span-1 ${cardBg} ${cardBorder} rounded-2xl p-6 cursor-pointer transition-all hover:scale-[1.02] flex flex-col`}
+          style={{ minHeight: '350px', aspectRatio: '16/10' }}
           onClick={() => {
             setCanvasState({ type: 'detail', view: 'leads' });
             setWorkspaceView('CRM');
           }}
         >
-          <h3 className={`${titleColor} text-sm font-medium mb-1`}>Your Prospects</h3>
-          <p className={`${descColor} text-xs mb-3`}>
+          <div className="flex items-center gap-2 mb-2">
+            <Users className={`w-5 h-5 ${iconColor}`} />
+            <h3 className={`${titleColor} text-sm font-medium`}>Your Prospects</h3>
+          </div>
+          <p className={`${descColor} text-xs mb-4`}>
             Potential customers in your market.
           </p>
-          <ul className="space-y-1.5 flex-1">
+          <ul className="space-y-2 flex-1">
             <li className={`flex items-center gap-2 text-xs ${bulletColor}`}>
               <Check className={`w-3 h-3 ${iconColor} flex-shrink-0`} />
-              Lead discovery
+              Lead discovery & scoring
             </li>
             <li className={`flex items-center gap-2 text-xs ${bulletColor}`}>
               <Check className={`w-3 h-3 ${iconColor} flex-shrink-0`} />
-              Contact info
+              Contact info & website analysis
             </li>
             <li className={`flex items-center gap-2 text-xs ${bulletColor}`}>
               <Check className={`w-3 h-3 ${iconColor} flex-shrink-0`} />
-              Outreach scripts
+              Outreach scripts & templates
             </li>
           </ul>
-          <div className="flex justify-end mt-2">
-            <Users className={`w-8 h-8 ${iconColor}`} />
+          {/* Lead count */}
+          <div className={`mt-auto pt-4 border-t ${isDark ? 'border-zinc-700' : 'border-zinc-200'}`}>
+            <span className={`text-2xl font-bold ${titleColor}`}>
+              {artifacts.leads?.leads?.length || 0}
+            </span>
+            <span className={`text-sm ${descColor} ml-2`}>leads in pipeline</span>
+          </div>
+        </div>
+
+        {/* Customers Card */}
+        <div
+          className={`col-span-1 ${cardBg} ${cardBorder} rounded-2xl p-6 cursor-pointer transition-all hover:scale-[1.02] flex flex-col`}
+          style={{ minHeight: '350px', aspectRatio: '16/10' }}
+          onClick={() => {
+            // Could navigate to a dedicated customers view in the future
+            setCanvasState({ type: 'detail', view: 'leads' });
+            setWorkspaceView('CRM');
+          }}
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <Crown className={`w-5 h-5 text-amber-500`} />
+            <h3 className={`${titleColor} text-sm font-medium`}>Your Customers</h3>
+          </div>
+          <p className={`${descColor} text-xs mb-4`}>
+            Converted leads with their websites.
+          </p>
+
+          {customers.length > 0 ? (
+            <div className="flex-1 space-y-2 overflow-hidden">
+              {customers.slice(0, 3).map((customer) => (
+                <div
+                  key={customer.id}
+                  className={`flex items-center gap-3 p-2 rounded-lg ${isDark ? 'bg-zinc-800' : 'bg-zinc-100'}`}
+                >
+                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-500/20 to-pink-500/20 flex items-center justify-center overflow-hidden">
+                    {customer.website ? (
+                      <Globe className={`w-4 h-4 ${isDark ? 'text-orange-400' : 'text-orange-500'}`} />
+                    ) : (
+                      <Crown className="w-4 h-4 text-amber-500" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-xs font-medium ${titleColor} truncate`}>
+                      {customer.company_name}
+                    </p>
+                    {customer.lifetime_value && customer.lifetime_value > 0 && (
+                      <p className="text-xs text-green-500">
+                        ${customer.lifetime_value.toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {customers.length > 3 && (
+                <p className={`text-xs ${descColor} text-center`}>
+                  +{customers.length - 3} more
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center justify-center">
+              <p className={`text-xs ${descColor} text-center`}>
+                Convert leads to see them here
+              </p>
+            </div>
+          )}
+
+          {/* Customer count */}
+          <div className={`mt-auto pt-4 border-t ${isDark ? 'border-zinc-700' : 'border-zinc-200'}`}>
+            <span className={`text-2xl font-bold ${titleColor}`}>
+              {customers.length}
+            </span>
+            <span className={`text-sm ${descColor} ml-2`}>
+              {customers.length === 1 ? 'customer' : 'customers'}
+            </span>
           </div>
         </div>
 

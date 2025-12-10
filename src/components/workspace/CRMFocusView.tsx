@@ -2,11 +2,12 @@
 
 import { useState } from 'react';
 import { useProjectStore } from '@/store/projectStore';
-import { Mail, Phone, Linkedin, GripVertical, ExternalLink, AlertTriangle, Globe, X, MapPin, Search, Loader2, ArrowRight } from 'lucide-react';
+import { Mail, Phone, Linkedin, GripVertical, ExternalLink, AlertTriangle, Globe, X, MapPin, Search, Loader2, ArrowRight, Plus } from 'lucide-react';
 import type { Lead } from '@/types/database';
 import EmailModal from './EmailModal';
 import CallScriptModal from './CallScriptModal';
 import { useCanvasBackground } from '@/hooks/useCanvasBackground';
+import { AddLeadModal, type NewLead } from './AddLeadModal';
 
 // Kanban column definitions
 const COLUMNS: { id: Lead['status']; label: string; color: string }[] = [
@@ -30,6 +31,9 @@ export default function CRMFocusView() {
   const [leadGenSearchTerms, setLeadGenSearchTerms] = useState('');
   const [leadGenCount, setLeadGenCount] = useState(20);
 
+  // Add lead modal state
+  const [showAddLeadModal, setShowAddLeadModal] = useState(false);
+
   const isLeadsLoading = runningTools.has('leads');
 
   // Dynamic styling based on background - solid backgrounds to match theme
@@ -50,6 +54,33 @@ export default function CRMFocusView() {
   // Handler for opening lead generation modal
   const handleGenerateLeads = () => {
     setShowLeadGenModal(true);
+  };
+
+  // Get current project ID from store
+  const { project } = useProjectStore();
+  const projectId = project?.id;
+
+  // Handler for adding a lead manually
+  const handleAddLead = async (lead: NewLead) => {
+    if (!projectId) {
+      throw new Error('No project selected');
+    }
+
+    const response = await fetch('/api/leads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_id: projectId,
+        ...lead,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to add lead');
+    }
+
+    // Refresh leads by triggering a re-fetch
+    window.dispatchEvent(new CustomEvent('refreshLeads'));
   };
 
   // Handler for submitting lead generation
@@ -128,13 +159,22 @@ export default function CRMFocusView() {
             {allLeads.length} {allLeads.length === 1 ? 'prospect' : 'prospects'} · Drag to move
           </p>
         </div>
-        <button
-          onClick={handleGenerateLeads}
-          disabled={isLeadsLoading}
-          className={`flex items-center gap-2 px-4 py-2 text-sm font-medium ${isDark ? 'bg-white hover:bg-zinc-100 text-zinc-900' : 'bg-zinc-900 hover:bg-zinc-800 text-white'} rounded-lg transition-colors disabled:opacity-50`}
-        >
-          {isLeadsLoading ? 'Generating...' : 'Generate Leads'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowAddLeadModal(true)}
+            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium ${isDark ? 'bg-zinc-700 hover:bg-zinc-600 text-white' : 'bg-zinc-200 hover:bg-zinc-300 text-zinc-900'} rounded-lg transition-colors`}
+          >
+            <Plus size={16} />
+            Add Lead
+          </button>
+          <button
+            onClick={handleGenerateLeads}
+            disabled={isLeadsLoading}
+            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium ${isDark ? 'bg-white hover:bg-zinc-100 text-zinc-900' : 'bg-zinc-900 hover:bg-zinc-800 text-white'} rounded-lg transition-colors disabled:opacity-50`}
+          >
+            {isLeadsLoading ? 'Generating...' : 'Generate Leads'}
+          </button>
+        </div>
       </div>
 
       {/* Kanban Board */}
@@ -351,6 +391,16 @@ export default function CRMFocusView() {
           onClose={() => setCallModalLead(null)}
           lead={callModalLead}
           script={getScriptForLead(callModalLead.id)!}
+        />
+      )}
+
+      {/* Add Lead Modal */}
+      {projectId && (
+        <AddLeadModal
+          isOpen={showAddLeadModal}
+          onClose={() => setShowAddLeadModal(false)}
+          onSubmit={handleAddLead}
+          projectId={projectId}
         />
       )}
     </div>
