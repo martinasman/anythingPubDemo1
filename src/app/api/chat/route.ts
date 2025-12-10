@@ -20,6 +20,9 @@ import { remixWebsite, remixSchema } from '../tools/tool-remix';
 import { generateImage, imageSchema } from '../tools/tool-image';
 // AI system prompt
 import { ORCHESTRATOR_SYSTEM_PROMPT } from '@/config/agentPrompts';
+// Credit system
+import { deductCredits, getCredits } from '@/lib/credits';
+import { TOOL_CREDIT_COSTS } from '@/data/pricing';
 
 // ============================================
 // TOOL DISPLAY NAMES (simplified)
@@ -96,6 +99,25 @@ export async function POST(req: Request) {
     // Initialize Supabase client
     const supabase = await createClient();
     logTiming('supabase_client_created');
+
+    // Get authenticated user for credit tracking
+    const { data: { user } } = await supabase.auth.getUser();
+    const userId = user?.id;
+    if (userId) {
+      console.log('[Chat API] User authenticated:', userId);
+    }
+
+    // Pre-flight credit check - warn if user has no credits
+    let userCredits: number | null = null;
+    if (userId) {
+      const creditResult = await getCredits(userId);
+      if (creditResult.success) {
+        userCredits = creditResult.credits ?? 0;
+        if (userCredits === 0) {
+          console.log('[Chat API] ⚠️ User has no credits remaining');
+        }
+      }
+    }
 
     // Initialize OpenRouter client
     const openrouter = createOpenRouter({
@@ -609,6 +631,30 @@ Discuss ideas, create plans, outline features. You can make changes if explicitl
                 const durationDisplay = duration ? `${duration}s` : '';
                 await writeProgress(`[WORK_DONE:${toolResult.toolName}:${durationDisplay}]\n`);
                 console.log(`[Chat API] ✅ Completed: ${toolResult.toolName}${duration ? ` (${duration}s)` : ''}`);
+
+                // Deduct credits for successful tool execution
+                const creditCost = TOOL_CREDIT_COSTS[toolResult.toolName] || 0;
+                if (creditCost > 0 && userId) {
+                  const deductResult = await deductCredits(
+                    userId,
+                    creditCost,
+                    `Used ${toolResult.toolName}`,
+                    { projectId, toolName: toolResult.toolName }
+                  );
+
+                  if (deductResult.success) {
+                    // Emit new credit balance to client
+                    await writeProgress(`[CREDITS:${deductResult.credits}]\n`);
+                    console.log(`[Chat API] 💰 Deducted ${creditCost} credits. New balance: ${deductResult.credits}`);
+                  } else {
+                    console.error(`[Chat API] ❌ Credit deduction failed: ${deductResult.error}`);
+                    // If insufficient credits, emit marker for client to show modal
+                    if (deductResult.error === 'Insufficient credits') {
+                      const currentCredits = (await getCredits(userId)).credits || 0;
+                      await writeProgress(`[INSUFFICIENT_CREDITS:${creditCost}:${currentCredits}:${toolResult.toolName}]\n`);
+                    }
+                  }
+                }
 
                 // Inject success message for edit tools (AI doesn't reliably see tool results)
                 // Also set flag to suppress any subsequent AI text that might hallucinate errors

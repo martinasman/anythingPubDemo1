@@ -12,6 +12,8 @@ import {
   WebsiteArtifact,
   LeadWebsitesArtifact,
 } from '@/types/database';
+import { hasCredits, deductCredits } from '@/lib/credits';
+import { CREDIT_COSTS } from '@/data/pricing';
 
 interface PublishRequest {
   projectId: string;
@@ -43,6 +45,23 @@ export async function POST(req: NextRequest) {
         { error: 'Missing required fields: projectId, sourceType, subdomain' },
         { status: 400 }
       );
+    }
+
+    // Check user credits before deploying
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const publishCost = CREDIT_COSTS.publish_website;
+      const canPublish = await hasCredits(user.id, publishCost);
+      if (!canPublish) {
+        return NextResponse.json(
+          {
+            error: 'Insufficient credits',
+            required: publishCost,
+            code: 'INSUFFICIENT_CREDITS'
+          },
+          { status: 402 }
+        );
+      }
     }
 
     // Sanitize subdomain
@@ -193,6 +212,21 @@ export async function POST(req: NextRequest) {
         })
         .eq('id', publishedWebsite.id);
 
+      // Deduct credits after successful deployment
+      let newCredits: number | undefined;
+      if (user) {
+        const deductResult = await deductCredits(
+          user.id,
+          CREDIT_COSTS.publish_website,
+          'Published website to Vercel',
+          { projectId }
+        );
+        if (deductResult.success) {
+          newCredits = deductResult.credits;
+          console.log(`[Publish API] Deducted ${CREDIT_COSTS.publish_website} credits. New balance: ${newCredits}`);
+        }
+      }
+
       return NextResponse.json({
         publishedWebsite: publishedWebsiteRowToPublishedWebsite({
           ...publishedWebsite,
@@ -201,6 +235,7 @@ export async function POST(req: NextRequest) {
           status: deployment.readyState === 'READY' ? 'published' : 'deploying',
         } as PublishedWebsiteRow),
         deployment,
+        credits: newCredits,
       });
     } catch (deployError) {
       console.error('Vercel deployment failed:', deployError);

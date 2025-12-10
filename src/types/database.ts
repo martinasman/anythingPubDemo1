@@ -1064,3 +1064,83 @@ export function publishedWebsiteToRow(
     view_count: website.viewCount,
   };
 }
+
+// ============================================
+// CREDIT SYSTEM TYPES
+// ============================================
+
+export type UserProfileRow = {
+  id: string;
+  user_id: string;
+  credits: number;
+  lifetime_credits_purchased: number;
+  stripe_customer_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CreditTransactionRow = {
+  id: string;
+  user_id: string;
+  amount: number;
+  balance_after: number;
+  type: 'purchase' | 'deduction' | 'refund' | 'bonus' | 'free_tier';
+  description: string;
+  metadata: {
+    stripe_session_id?: string;
+    stripe_payment_intent?: string;
+    project_id?: string;
+    artifact_type?: string;
+    tool_name?: string;
+    credit_package?: string;
+  } | null;
+  created_at: string;
+};
+
+export type UserProfile = {
+  id: string;
+  userId: string;
+  credits: number;
+  lifetimeCreditsPurchased: number;
+  stripeCustomerId?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreditTransaction = {
+  id: string;
+  userId: string;
+  amount: number;
+  balanceAfter: number;
+  type: 'purchase' | 'deduction' | 'refund' | 'bonus' | 'free_tier';
+  description: string;
+  metadata?: CreditTransactionRow['metadata'];
+  createdAt: string;
+};
+
+// Convert UserProfileRow to UserProfile type
+export function userProfileRowToUserProfile(row: UserProfileRow): UserProfile {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    credits: row.credits,
+    lifetimeCreditsPurchased: row.lifetime_credits_purchased,
+    stripeCustomerId: row.stripe_customer_id || undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+// Convert CreditTransactionRow to CreditTransaction type
+export function creditTransactionRowToCreditTransaction(row: CreditTransactionRow): CreditTransaction {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    amount: row.amount,
+    balanceAfter: row.balance_after,
+    type: row.type,
+    description: row.description,
+    metadata: row.metadata || undefined,
+    createdAt: row.created_at,
+  };
+}

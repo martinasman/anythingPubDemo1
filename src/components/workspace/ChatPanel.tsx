@@ -24,6 +24,8 @@ import { TOOL_DISPLAY_NAMES } from '@/store/projectStore';
 import { WorkSection, type WorkItem, type ProgressStage, type ActivityEvent } from './WorkSection';
 import { CodeChangeViewer, type CodeChange } from './CodeChangeViewer';
 import { WaveText } from '../ui/WaveText';
+import InsufficientCreditsModal from '@/components/credits/InsufficientCreditsModal';
+import { emitCreditUpdate } from '@/hooks/useCredits';
 
 // Curated top models with provider info (same as HeroInput)
 interface TopModel {
@@ -187,6 +189,13 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
   const [workItems, setWorkItems] = useState<Record<string, WorkItem>>({});
   const [codeChanges, setCodeChanges] = useState<Record<string, CodeChange[]>>({});
   const [lastError, setLastError] = useState<{ message: string; toolName: string } | null>(null);
+  // State for insufficient credits modal
+  const [insufficientCreditsModal, setInsufficientCreditsModal] = useState<{
+    isOpen: boolean;
+    required: number;
+    current: number;
+    actionName: string;
+  }>({ isOpen: false, required: 0, current: 0, actionName: '' });
   // New state for enhanced progress UI
   const [thinkingMessages, setThinkingMessages] = useState<string[]>([]);
   const [tokenUsage, setTokenUsage] = useState<{ promptTokens: number; completionTokens: number; cost: number } | null>(null);
@@ -812,6 +821,29 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
             setLastError({ message: errorMessage, toolName });
           }
 
+          // Parse [CREDITS:balance] markers - update credit display in real-time
+          const creditMatches = chunk.matchAll(/\[CREDITS:(\d+)\]/g);
+          for (const match of creditMatches) {
+            const [, balance] = match;
+            const newCredits = parseInt(balance, 10);
+            // Emit credit update to useCredits hook (updates header display)
+            emitCreditUpdate(newCredits);
+            console.log('[ChatPanel] Credit balance updated:', newCredits);
+          }
+
+          // Parse [INSUFFICIENT_CREDITS:required:current:toolName] markers - show modal
+          const insufficientMatches = chunk.matchAll(/\[INSUFFICIENT_CREDITS:(\d+):(\d+):(\w+)\]/g);
+          for (const match of insufficientMatches) {
+            const [, required, current, toolName] = match;
+            setInsufficientCreditsModal({
+              isOpen: true,
+              required: parseInt(required, 10),
+              current: parseInt(current, 10),
+              actionName: toolName.replace(/_/g, ' '),
+            });
+            console.log('[ChatPanel] Insufficient credits:', { required, current, toolName });
+          }
+
           // Parse [CODE_CHANGE:file:description|before|after] markers
           const codeChangeMatches = chunk.matchAll(/\[CODE_CHANGE:([^:]+):([^\]|]+)(?:\|([^|]+)\|([^|]+))?\]/g);
           for (const match of codeChangeMatches) {
@@ -964,6 +996,9 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
             .replace(/\[WORK_ERROR:\w+:[^\]]+\]\n?/g, '')
             .replace(/\[WORK_PROGRESS:\w+:[^\]]+\]\n?/g, '')
             .replace(/\[CODE_CHANGE:[^\]]+\]\n?/g, '')
+            // Credit markers
+            .replace(/\[CREDITS:\d+\]\n?/g, '')
+            .replace(/\[INSUFFICIENT_CREDITS:\d+:\d+:\w+\]\n?/g, '')
             // Status markers for immediate feedback
             .replace(/\[STATUS:[^\]]+\]\n?/g, '')
             // New enhanced progress markers
@@ -1540,6 +1575,15 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
           </div>
         </div>
       </form>
+
+      {/* Insufficient Credits Modal */}
+      <InsufficientCreditsModal
+        isOpen={insufficientCreditsModal.isOpen}
+        onClose={() => setInsufficientCreditsModal(prev => ({ ...prev, isOpen: false }))}
+        requiredCredits={insufficientCreditsModal.required}
+        currentCredits={insufficientCreditsModal.current}
+        actionName={insufficientCreditsModal.actionName}
+      />
     </div>
   );
 }

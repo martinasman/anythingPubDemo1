@@ -1,17 +1,19 @@
 'use client';
 
-import { Moon, Sun, Menu, X, LogOut, ChevronDown } from 'lucide-react';
+import { Moon, Sun, Menu, X, LogOut, ChevronDown, Coins, Plus } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useTheme } from 'next-themes';
 import { useEffect, useState, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useCredits } from '@/hooks/useCredits';
 
 const navLinks: Array<{ label: string; href: string }> = [];
 
 export default function Header() {
   const { theme, resolvedTheme, setTheme } = useTheme();
   const { user, isLoading: authLoading, signOut } = useAuth();
+  const { credits, isLoading: creditsLoading } = useCredits();
   const [mounted, setMounted] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -117,43 +119,114 @@ export default function Header() {
                     onClick={() => setUserMenuOpen(!userMenuOpen)}
                     className="flex items-center gap-2 p-1 rounded-lg hover:bg-zinc-100 dark:hover:bg-neutral-800 transition-colors"
                   >
-                    {user.user_metadata?.avatar_url ? (
-                      <Image
-                        src={user.user_metadata.avatar_url}
-                        alt="Avatar"
-                        width={32}
-                        height={32}
-                        className="rounded-full"
-                      />
-                    ) : (
-                      <div className="w-8 h-8 rounded-full bg-zinc-300 dark:bg-neutral-600 flex items-center justify-center text-sm font-medium text-zinc-700 dark:text-neutral-300">
-                        {user.email?.[0]?.toUpperCase() || 'U'}
-                      </div>
-                    )}
+                    <div className="relative">
+                      {user.user_metadata?.avatar_url ? (
+                        <Image
+                          src={user.user_metadata.avatar_url}
+                          alt="Avatar"
+                          width={32}
+                          height={32}
+                          className="rounded-full"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-zinc-300 dark:bg-neutral-600 flex items-center justify-center text-sm font-medium text-zinc-700 dark:text-neutral-300">
+                          {user.email?.[0]?.toUpperCase() || 'U'}
+                        </div>
+                      )}
+                      {/* Credit badge overlay */}
+                      {!creditsLoading && credits !== null && (
+                        <div
+                          className={`absolute -bottom-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-white dark:border-neutral-950 ${
+                            credits > 20
+                              ? 'bg-green-500'
+                              : credits > 5
+                              ? 'bg-amber-500'
+                              : 'bg-red-500'
+                          }`}
+                        >
+                          {credits > 99 ? '99+' : credits}
+                        </div>
+                      )}
+                    </div>
                     <ChevronDown size={14} className={`text-zinc-500 transition-transform ${userMenuOpen ? 'rotate-180' : ''}`} />
                   </button>
 
                   {/* User dropdown menu */}
                   {userMenuOpen && (
-                    <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-neutral-900 rounded-xl shadow-xl border border-zinc-200 dark:border-neutral-800 py-2 z-50">
+                    <div className="absolute right-0 mt-2 w-72 bg-white dark:bg-neutral-900 rounded-xl shadow-xl border border-zinc-200 dark:border-neutral-800 overflow-hidden z-50">
+                      {/* User info section */}
                       <div className="px-4 py-3 border-b border-zinc-100 dark:border-neutral-800">
-                        <p className="text-sm font-medium text-zinc-900 dark:text-white truncate">
-                          {user.user_metadata?.full_name || 'User'}
-                        </p>
-                        <p className="text-xs text-zinc-500 truncate">
-                          {user.email}
-                        </p>
+                        <div className="flex items-center gap-3">
+                          {user.user_metadata?.avatar_url ? (
+                            <Image
+                              src={user.user_metadata.avatar_url}
+                              alt="Avatar"
+                              width={40}
+                              height={40}
+                              className="rounded-full"
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-zinc-300 dark:bg-neutral-600 flex items-center justify-center text-sm font-medium text-zinc-700 dark:text-neutral-300">
+                              {user.email?.[0]?.toUpperCase() || 'U'}
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-zinc-900 dark:text-white truncate">
+                              {user.user_metadata?.full_name || 'User'}
+                            </p>
+                            <p className="text-xs text-zinc-500 truncate">
+                              {user.email}
+                            </p>
+                          </div>
+                        </div>
                       </div>
-                      <button
-                        onClick={() => {
-                          signOut();
-                          setUserMenuOpen(false);
-                        }}
-                        className="w-full flex items-center gap-2 px-4 py-2 text-sm text-zinc-600 dark:text-neutral-400 hover:bg-zinc-100 dark:hover:bg-neutral-800 transition-colors"
-                      >
-                        <LogOut size={16} />
-                        Sign out
-                      </button>
+
+                      {/* Credits section */}
+                      <div className="px-4 py-3 border-b border-zinc-100 dark:border-neutral-800">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Coins size={18} className="text-amber-500" />
+                            <span className="text-sm font-medium text-zinc-900 dark:text-white">
+                              {creditsLoading ? '...' : credits ?? 0} credits
+                            </span>
+                          </div>
+                          <Link
+                            href="/pricing"
+                            onClick={() => setUserMenuOpen(false)}
+                            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors"
+                          >
+                            <Plus size={12} />
+                            Top Up
+                          </Link>
+                        </div>
+                        {!creditsLoading && credits !== null && credits < 10 && (
+                          <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+                            Running low on credits
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Menu items */}
+                      <div className="py-1">
+                        <Link
+                          href="/pricing"
+                          onClick={() => setUserMenuOpen(false)}
+                          className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-zinc-600 dark:text-neutral-400 hover:bg-zinc-100 dark:hover:bg-neutral-800 transition-colors"
+                        >
+                          <Coins size={16} />
+                          View Pricing
+                        </Link>
+                        <button
+                          onClick={() => {
+                            signOut();
+                            setUserMenuOpen(false);
+                          }}
+                          className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-zinc-600 dark:text-neutral-400 hover:bg-zinc-100 dark:hover:bg-neutral-800 transition-colors"
+                        >
+                          <LogOut size={16} />
+                          Sign out
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -214,20 +287,37 @@ export default function Header() {
             <div className="flex flex-col gap-3 pt-4 border-t border-zinc-200 dark:border-neutral-800">
               {user ? (
                 <>
+                  {/* User info */}
                   <div className="flex items-center gap-3 px-2 py-2">
-                    {user.user_metadata?.avatar_url ? (
-                      <Image
-                        src={user.user_metadata.avatar_url}
-                        alt="Avatar"
-                        width={40}
-                        height={40}
-                        className="rounded-full"
-                      />
-                    ) : (
-                      <div className="w-10 h-10 rounded-full bg-zinc-300 dark:bg-neutral-600 flex items-center justify-center text-sm font-medium text-zinc-700 dark:text-neutral-300">
-                        {user.email?.[0]?.toUpperCase() || 'U'}
-                      </div>
-                    )}
+                    <div className="relative">
+                      {user.user_metadata?.avatar_url ? (
+                        <Image
+                          src={user.user_metadata.avatar_url}
+                          alt="Avatar"
+                          width={40}
+                          height={40}
+                          className="rounded-full"
+                        />
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-zinc-300 dark:bg-neutral-600 flex items-center justify-center text-sm font-medium text-zinc-700 dark:text-neutral-300">
+                          {user.email?.[0]?.toUpperCase() || 'U'}
+                        </div>
+                      )}
+                      {/* Credit badge */}
+                      {!creditsLoading && credits !== null && (
+                        <div
+                          className={`absolute -bottom-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-white dark:border-neutral-900 ${
+                            credits > 20
+                              ? 'bg-green-500'
+                              : credits > 5
+                              ? 'bg-amber-500'
+                              : 'bg-red-500'
+                          }`}
+                        >
+                          {credits > 99 ? '99+' : credits}
+                        </div>
+                      )}
+                    </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-zinc-900 dark:text-white truncate">
                         {user.user_metadata?.full_name || 'User'}
@@ -237,6 +327,32 @@ export default function Header() {
                       </p>
                     </div>
                   </div>
+
+                  {/* Credits section */}
+                  <div className="px-2 py-3 bg-zinc-50 dark:bg-neutral-800 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Coins size={18} className="text-amber-500" />
+                        <span className="text-sm font-medium text-zinc-900 dark:text-white">
+                          {creditsLoading ? '...' : credits ?? 0} credits
+                        </span>
+                      </div>
+                      <Link
+                        href="/pricing"
+                        onClick={() => setMobileMenuOpen(false)}
+                        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors"
+                      >
+                        <Plus size={12} />
+                        Top Up
+                      </Link>
+                    </div>
+                    {!creditsLoading && credits !== null && credits < 10 && (
+                      <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+                        Running low on credits
+                      </p>
+                    )}
+                  </div>
+
                   <button
                     onClick={() => {
                       signOut();

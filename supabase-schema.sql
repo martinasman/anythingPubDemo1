@@ -635,6 +635,85 @@ CREATE POLICY "Allow public delete access to published_websites"
 ALTER PUBLICATION supabase_realtime ADD TABLE published_websites;
 
 -- ============================================
+-- USER PROFILES TABLE (Credit System)
+-- ============================================
+-- Stores user credit balance and Stripe customer info
+CREATE TABLE IF NOT EXISTS user_profiles (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL UNIQUE,
+  credits INTEGER NOT NULL DEFAULT 50,
+  lifetime_credits_purchased INTEGER NOT NULL DEFAULT 0,
+  stripe_customer_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Performance Indexes
+CREATE INDEX IF NOT EXISTS idx_user_profiles_user_id ON user_profiles(user_id);
+
+-- Trigger for user_profiles table
+DROP TRIGGER IF EXISTS update_user_profiles_updated_at ON user_profiles;
+CREATE TRIGGER update_user_profiles_updated_at
+  BEFORE UPDATE ON user_profiles
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================
+-- CREDIT TRANSACTIONS TABLE (Audit Trail)
+-- ============================================
+-- Tracks all credit additions and deductions
+CREATE TABLE IF NOT EXISTS credit_transactions (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL,
+  amount INTEGER NOT NULL,
+  balance_after INTEGER NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('purchase', 'deduction', 'refund', 'bonus', 'free_tier')),
+  description TEXT NOT NULL,
+  metadata JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Performance Indexes
+CREATE INDEX IF NOT EXISTS idx_credit_transactions_user_id ON credit_transactions(user_id);
+CREATE INDEX IF NOT EXISTS idx_credit_transactions_created_at ON credit_transactions(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_credit_transactions_type ON credit_transactions(type);
+
+-- ============================================
+-- RLS POLICIES FOR CREDIT TABLES
+-- ============================================
+
+-- Enable RLS on credit tables
+ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE credit_transactions ENABLE ROW LEVEL SECURITY;
+
+-- User profiles policies (public access for now - tighten for production)
+DROP POLICY IF EXISTS "Allow public read access to user_profiles" ON user_profiles;
+CREATE POLICY "Allow public read access to user_profiles"
+  ON user_profiles FOR SELECT
+  USING (true);
+
+DROP POLICY IF EXISTS "Allow public insert access to user_profiles" ON user_profiles;
+CREATE POLICY "Allow public insert access to user_profiles"
+  ON user_profiles FOR INSERT
+  WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public update access to user_profiles" ON user_profiles;
+CREATE POLICY "Allow public update access to user_profiles"
+  ON user_profiles FOR UPDATE
+  USING (true);
+
+-- Credit transactions policies
+DROP POLICY IF EXISTS "Allow public read access to credit_transactions" ON credit_transactions;
+CREATE POLICY "Allow public read access to credit_transactions"
+  ON credit_transactions FOR SELECT
+  USING (true);
+
+DROP POLICY IF EXISTS "Allow public insert access to credit_transactions" ON credit_transactions;
+CREATE POLICY "Allow public insert access to credit_transactions"
+  ON credit_transactions FOR INSERT
+  WITH CHECK (true);
+
+-- ============================================
 -- CLEANUP (IF NEEDED)
 -- ============================================
 -- Uncomment these ONLY if you want to completely reset the database
