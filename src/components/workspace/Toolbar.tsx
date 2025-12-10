@@ -1,12 +1,15 @@
 'use client';
 
-import { Moon, Sun, Rocket, LayoutGrid, ChevronRight } from 'lucide-react';
+import { Moon, Sun, Rocket, LayoutGrid, ChevronRight, ChevronDown, Home, Coins, Gift, Settings, Palette, HelpCircle, LogOut } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useTheme } from 'next-themes';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useProjectStore } from '@/store/projectStore';
 import PublishModal from '@/components/publish/PublishModal';
+import { useAuth } from '@/contexts/AuthContext';
+import { useCredits } from '@/hooks/useCredits';
+import { PlansCreditsOverlay } from '@/components/credits/PlansCreditsOverlay';
 
 
 interface ToolbarProps {
@@ -14,13 +17,31 @@ interface ToolbarProps {
 }
 
 export default function Toolbar({ projectName = 'New Project' }: ToolbarProps) {
-  const { theme, setTheme } = useTheme();
+  const { theme, resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const [showPublishModal, setShowPublishModal] = useState(false);
+  const [logoMenuOpen, setLogoMenuOpen] = useState(false);
+  const [creditsOverlayOpen, setCreditsOverlayOpen] = useState(false);
+  const logoMenuRef = useRef<HTMLDivElement>(null);
   const { canvasState, setCanvasState } = useProjectStore();
+  const { user, signOut } = useAuth();
+  const { credits, isLoading: creditsLoading } = useCredits();
+
+  const totalCredits = 50;
+  const currentCredits = credits ?? 0;
+  const percentRemaining = Math.min(100, (currentCredits / totalCredits) * 100);
 
   useEffect(() => {
     setMounted(true);
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (logoMenuRef.current && !logoMenuRef.current.contains(event.target as Node)) {
+        setLogoMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   const toggleTheme = () => {
@@ -59,19 +80,164 @@ export default function Toolbar({ projectName = 'New Project' }: ToolbarProps) {
       <div className="flex items-center justify-between h-full px-4">
         {/* Left Section - Logo & Project */}
         <div className="flex items-center gap-3">
-          {/* Logo */}
-          <Link href="/" className="flex items-center">
-            {mounted && (
-              <Image
-                src={theme === 'dark' ? '/anythingiconlight.png' : '/anythingicondark.png'}
-                alt="Anything"
-                width={20}
-                height={20}
-                className="transition-opacity duration-300"
-              />
+          {/* Logo with dropdown */}
+          <div className="relative" ref={logoMenuRef}>
+            <button
+              onClick={() => setLogoMenuOpen(!logoMenuOpen)}
+              className="flex items-center gap-1 p-1 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+            >
+              {mounted && (
+                <Image
+                  src={resolvedTheme === 'dark' ? '/anythingiconlight.png' : '/anythingicondark.png'}
+                  alt="Anything"
+                  width={20}
+                  height={20}
+                  className="transition-opacity duration-300"
+                />
+              )}
+              {!mounted && <div className="w-5 h-5" />}
+              <ChevronDown size={12} className={`text-zinc-500 transition-transform ${logoMenuOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {/* Logo dropdown menu */}
+            {logoMenuOpen && (
+              <div className="absolute left-0 mt-2 w-72 bg-white dark:bg-zinc-900 rounded-xl shadow-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden z-50">
+                {/* User info section */}
+                {user && (
+                  <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800">
+                    <div className="flex items-center gap-3">
+                      {user.user_metadata?.avatar_url ? (
+                        <Image
+                          src={user.user_metadata.avatar_url}
+                          alt="Avatar"
+                          width={36}
+                          height={36}
+                          className="rounded-full"
+                        />
+                      ) : (
+                        <div className="w-9 h-9 rounded-full bg-zinc-300 dark:bg-zinc-600 flex items-center justify-center text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                          {user.email?.[0]?.toUpperCase() || 'U'}
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-zinc-900 dark:text-white truncate">
+                          {user.user_metadata?.full_name || 'User'}
+                        </p>
+                        <p className="text-xs text-zinc-500 truncate">
+                          {user.email}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Menu items */}
+                <div className="py-1">
+                  <Link
+                    href="/"
+                    onClick={() => setLogoMenuOpen(false)}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                  >
+                    <Home size={16} className="text-zinc-500" />
+                    Go to Dashboard
+                  </Link>
+
+                  {/* Credits item with balance */}
+                  {user && (
+                    <button
+                      onClick={() => {
+                        setLogoMenuOpen(false);
+                        setCreditsOverlayOpen(true);
+                      }}
+                      className="w-full px-4 py-3 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-3">
+                          <Coins size={16} className="text-zinc-500" />
+                          <span className="text-sm text-zinc-700 dark:text-zinc-300">Credits</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-sm font-medium text-zinc-900 dark:text-white">
+                            {creditsLoading ? '...' : currentCredits}
+                          </span>
+                          <span className="text-xs text-zinc-500">left</span>
+                          <ChevronDown size={14} className="text-zinc-400 -rotate-90" />
+                        </div>
+                      </div>
+                      {/* Progress bar */}
+                      <div className="h-1.5 bg-zinc-200 dark:bg-zinc-700 rounded-full overflow-hidden mb-1.5">
+                        <div
+                          className="h-full bg-gradient-to-r from-orange-500 to-blue-500 transition-all duration-300"
+                          style={{ width: `${percentRemaining}%` }}
+                        />
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                        <span className="text-[10px] text-zinc-500">Daily credits used first</span>
+                      </div>
+                    </button>
+                  )}
+
+                  <div className="my-1 border-t border-zinc-100 dark:border-zinc-800" />
+
+                  {user && (
+                    <button
+                      onClick={() => setLogoMenuOpen(false)}
+                      className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                    >
+                      <Gift size={16} className="text-zinc-500" />
+                      Get free credits
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => setLogoMenuOpen(false)}
+                    className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <Settings size={16} className="text-zinc-500" />
+                      Settings
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      toggleTheme();
+                      setLogoMenuOpen(false);
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                  >
+                    <Palette size={16} className="text-zinc-500" />
+                    Appearance
+                  </button>
+
+                  <button
+                    onClick={() => setLogoMenuOpen(false)}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                  >
+                    <HelpCircle size={16} className="text-zinc-500" />
+                    Help
+                  </button>
+
+                  {user && (
+                    <>
+                      <div className="my-1 border-t border-zinc-100 dark:border-zinc-800" />
+                      <button
+                        onClick={() => {
+                          signOut();
+                          setLogoMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                      >
+                        <LogOut size={16} className="text-zinc-500" />
+                        Sign out
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
             )}
-            {!mounted && <div className="w-5 h-5" />}
-          </Link>
+          </div>
 
           {/* Divider */}
           <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700" />
@@ -186,6 +352,12 @@ export default function Toolbar({ projectName = 'New Project' }: ToolbarProps) {
         isOpen={showPublishModal}
         onClose={() => setShowPublishModal(false)}
         sourceType="project"
+      />
+
+      {/* Credits Overlay */}
+      <PlansCreditsOverlay
+        isOpen={creditsOverlayOpen}
+        onClose={() => setCreditsOverlayOpen(false)}
       />
     </div>
   );
