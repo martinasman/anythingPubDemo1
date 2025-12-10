@@ -1,16 +1,13 @@
 'use client';
 
 import Header from '@/components/home/Header';
-import { HowItWorks } from '@/components/landing/HowItWorks';
-import { SocialProof } from '@/components/landing/SocialProof';
-import { Footer } from '@/components/landing/Footer';
 import HeroInput from '@/components/home/HeroInput';
 import ProjectDashboard from '@/components/home/ProjectDashboard';
 import PendingProjectHandler from '@/components/home/PendingProjectHandler';
 
 export default function Home() {
   return (
-    <div className="min-h-screen transition-colors" style={{ background: 'var(--surface-1)' }}>
+    <div className="min-h-screen transition-colors bg-zinc-100 dark:bg-zinc-900">
       {/* Handle pending projects after sign-in redirect */}
       <PendingProjectHandler />
 
@@ -26,16 +23,7 @@ export default function Home() {
 
         {/* Project Dashboard (only shows when authenticated) */}
         <ProjectDashboard />
-
-        {/* How It Works */}
-        <HowItWorks />
-
-        {/* Social Proof / Testimonials */}
-        <SocialProof />
       </main>
-
-      {/* Footer */}
-      <Footer />
     </div>
   );
 }
