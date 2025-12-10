@@ -1,16 +1,12 @@
 'use client';
 
 import { useProjectStore } from '@/store/projectStore';
-import { useState, useEffect } from 'react';
 import PreviewPanel from './PreviewPanel';
 import BrandView from './BrandView';
 import WebsiteFocusView from './WebsiteFocusView';
 import CRMDashboard from './CRMDashboard';
 import ClientsView from './ClientsView';
-import BusinessPlanView from './BusinessPlanView';
 import FirstWeekPlanView from './FirstWeekPlanView';
-import AdsFocusView from './AdsFocusView';
-import OnboardingWalkthrough from './OnboardingWalkthrough';
 import LoadingCanvas from './LoadingCanvas';
 import OverviewCanvas from './OverviewCanvas';
 import LeadDetailWorkspace from './LeadDetailWorkspace';
@@ -65,30 +61,8 @@ function CRMDashboardWrapper() {
 export default function ContextPanel() {
   const {
     canvasState,
-    artifacts,
     hasStartedGeneration,
-    hasSeenOnboarding,
-    setHasSeenOnboarding,
   } = useProjectStore();
-
-  const [showOnboarding, setShowOnboarding] = useState(false);
-
-  // Determine if all key artifacts are ready for onboarding
-  const hasIdentity = !!artifacts.identity;
-  const hasWebsite = !!artifacts.website;
-  const allKeyArtifactsReady = hasIdentity && hasWebsite;
-
-  // Show onboarding after first generation completes (when key artifacts are ready)
-  useEffect(() => {
-    if (hasStartedGeneration && !hasSeenOnboarding && allKeyArtifactsReady && canvasState.type === 'overview') {
-      setShowOnboarding(true);
-    }
-  }, [hasStartedGeneration, hasSeenOnboarding, allKeyArtifactsReady, canvasState.type]);
-
-  const handleOnboardingComplete = () => {
-    setShowOnboarding(false);
-    setHasSeenOnboarding(true);
-  };
 
   // Render content based on canvas state
   const renderContent = () => {
@@ -116,16 +90,12 @@ export default function ContextPanel() {
           return <WebsiteFocusView />;
         case 'brand':
           return <BrandView />;
-        case 'offer':
-          return <BusinessPlanView />;
         case 'plan':
           return <FirstWeekPlanView />;
         case 'leads':
           return <CRMDashboardWrapper />;
         case 'clients':
           return <ClientsView />;
-        case 'ads':
-          return <AdsFocusView />;
         default:
           return <OverviewCanvas />;
       }
@@ -145,9 +115,6 @@ export default function ContextPanel() {
       <PreviewPanel>
         {renderContent()}
       </PreviewPanel>
-
-      {/* Onboarding Modal */}
-      {showOnboarding && <OnboardingWalkthrough onComplete={handleOnboardingComplete} />}
     </div>
   );
 }

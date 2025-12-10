@@ -88,7 +88,8 @@ async function generateHTMLSite(params: z.infer<typeof codeGenSchema> & {
   const { businessDescription, identity, projectId, modelId, marketResearch, imageContext, leadId, onProgress } = params;
 
   try {
-    // Emit initial progress
+    // Emit initial activity - analyzing business
+    await onProgress?.('activity', 'read:business description');
     await onProgress?.('analyzing', 'Analyzing business context...');
 
     // Initialize OpenRouter client
@@ -101,19 +102,28 @@ async function generateHTMLSite(params: z.infer<typeof codeGenSchema> & {
     console.log('[Code Tool] Using model:', selectedModel);
 
     // Get industry context for personalized website generation
+    await onProgress?.('activity', 'analyze:industry context');
     const industryContext = getIndustryContext(businessDescription);
     const personality = analyzeBusinessPersonality(businessDescription);
     const designAdaptations = getDesignAdaptations(personality);
-
-    // Emit progress for design phase
-    await onProgress?.('designing', 'Creating design system...');
 
     // Get industry-specific architect prompt
     const industryKey = detectIndustryKey(businessDescription);
     const architectPrompt = getArchitectPrompt('html', industryKey);
     console.log('[Code Tool] Using industry template:', industryKey);
 
+    // Emit thinking markers for transparency
+    await onProgress?.('thinking', `Detected ${industryKey} industry - using ${personality.tone} tone`);
+    if (identity?.colors) {
+      await onProgress?.('thinking', `Brand colors: ${identity.colors.primary} primary, ${identity.colors.accent} accent`);
+    }
+
+    // Emit progress for design phase
+    await onProgress?.('activity', 'analyze:brand identity');
+    await onProgress?.('designing', 'Creating design system...');
+
     // Load design inspiration from reference screenshots
+    await onProgress?.('activity', 'search:design patterns');
     let inspirationSection = '';
     try {
       const designInspiration = await getDesignInspiration();
@@ -381,6 +391,7 @@ For MULTI-PAGE websites, return additional HTML files:
 CRITICAL: Use /page/index.html format (not /page.html) for all subpages.`;
 
     // Emit progress before AI generation
+    await onProgress?.('activity', 'generate:website structure');
     await onProgress?.('generating', 'Building website pages...');
 
     // Generate the code using LLM
@@ -389,6 +400,9 @@ CRITICAL: Use /page/index.html format (not /page.html) for all subpages.`;
       prompt,
       temperature: 0.7,
     });
+
+    // Emit activity for AI completion
+    await onProgress?.('activity', 'analyze:generated code');
 
     // Emit progress for parsing phase
     await onProgress?.('processing', 'Processing generated code...');
@@ -405,6 +419,12 @@ CRITICAL: Use /page/index.html format (not /page.html) for all subpages.`;
         files: parsed.files,
         primaryPage: '/index.html',
       };
+
+      // Emit file creation markers for each generated file
+      for (const file of parsed.files) {
+        await onProgress?.('activity', `write:${file.path}`);
+        await onProgress?.('file_create', file.path);
+      }
     } catch (parseError) {
       console.error('Failed to parse LLM response:', text);
       throw new Error('LLM did not return valid JSON');

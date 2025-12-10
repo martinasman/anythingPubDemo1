@@ -323,17 +323,23 @@ export default function WebsiteFocusView() {
     let html = fileContents.htmlContent;
 
     if (fileContents.cssContent) {
+      // Inline CSS content
       html = html.replace(
         '</head>',
         `<style>${fileContents.cssContent}</style></head>`
       );
+      // Remove external stylesheet link to prevent 404 errors
+      html = html.replace(/<link[^>]*href=["']\/styles\.css["'][^>]*>/gi, '');
     }
 
     if (fileContents.jsContent) {
+      // Inline JS content
       html = html.replace(
         '</body>',
         `<script>${fileContents.jsContent}</script></body>`
       );
+      // Remove external script tag to prevent 404 errors
+      html = html.replace(/<script[^>]*src=["']\/script\.js["'][^>]*><\/script>/gi, '');
     }
 
     // Always inject navigation script for multi-page support

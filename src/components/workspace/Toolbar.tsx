@@ -38,8 +38,6 @@ export default function Toolbar({ projectName = 'New Project' }: ToolbarProps) {
           return 'Website';
         case 'brand':
           return 'Brand Identity';
-        case 'offer':
-          return 'Pricing';
         case 'plan':
           return 'First Week Plan';
         case 'leads':

@@ -3,7 +3,7 @@ import { generateText } from 'ai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { createClient } from '@supabase/supabase-js';
 import { parseHTML } from 'linkedom';
-import type { WebsiteArtifact, IdentityArtifact, BusinessPlanArtifact } from '@/types/database';
+import type { WebsiteArtifact, IdentityArtifact } from '@/types/database';
 
 // ============================================
 // TYPES
@@ -409,8 +409,7 @@ function extractPageStructure(html: string): PageStructure {
 // ============================================
 
 function buildBusinessContext(
-  identity: IdentityArtifact | null,
-  businessPlan: BusinessPlanArtifact | null
+  identity: IdentityArtifact | null
 ): BusinessContext {
   const context: BusinessContext = {
     businessName: identity?.name || 'Our Company',
@@ -422,25 +421,6 @@ function buildBusinessContext(
     },
     services: [],
   };
-
-  // Extract services from business plan pricing tiers
-  if (businessPlan?.pricingTiers) {
-    context.services = businessPlan.pricingTiers.map(tier => ({
-      name: tier.name,
-      description: tier.features?.join(', ') || '',
-      price: tier.price,
-    }));
-  }
-
-  // Also include service packages if available
-  if (businessPlan?.servicePackages) {
-    const packages = businessPlan.servicePackages.map(pkg => ({
-      name: pkg.name,
-      description: pkg.description || pkg.deliverables?.join(', ') || '',
-      price: pkg.price,
-    }));
-    context.services = [...context.services, ...packages];
-  }
 
   return context;
 }
@@ -670,22 +650,14 @@ export async function addWebsitePage(params: z.infer<typeof addPageSchema> & { p
       };
     } else {
       // For agency website, fetch brand and plan artifacts
-      const [brandResult, planResult] = await Promise.all([
-        (supabase.from('artifacts') as any)
-          .select('data')
-          .eq('project_id', projectId)
-          .eq('type', 'identity')
-          .single(),
-        (supabase.from('artifacts') as any)
-          .select('data')
-          .eq('project_id', projectId)
-          .eq('type', 'business_plan')
-          .single(),
-      ]);
+      const brandResult = await (supabase.from('artifacts') as any)
+        .select('data')
+        .eq('project_id', projectId)
+        .eq('type', 'identity')
+        .single();
 
       const brandIdentity = brandResult.data?.data as IdentityArtifact | null;
-      const businessPlan = planResult.data?.data as BusinessPlanArtifact | null;
-      businessContext = buildBusinessContext(brandIdentity, businessPlan);
+      businessContext = buildBusinessContext(brandIdentity);
     }
 
     console.log('[Add Page] Business context:', businessContext.businessName);

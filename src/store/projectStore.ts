@@ -6,9 +6,7 @@ import type {
   ArtifactType,
   WebsiteArtifact,
   IdentityArtifact,
-  AdsArtifact,
   ResearchArtifact,
-  BusinessPlanArtifact,
   LeadsArtifact,
   OutreachArtifact,
   FirstWeekPlanArtifact,
@@ -23,15 +21,15 @@ import type {
 
 type ToolType = 'research' | 'identity' | 'website' | 'businessplan' | 'leads' | 'outreach' | 'firstweekplan';
 type EditorMode = 'bento' | 'website' | 'leads' | 'outreach';
-type ContextView = 'overview' | 'identity' | 'offer' | 'funnel' | 'leads' | 'legal';
-export type WorkspaceView = 'HOME' | 'BRAND' | 'CRM' | 'SITE' | 'FINANCE' | 'ADS';
+type ContextView = 'overview' | 'identity' | 'funnel' | 'leads' | 'legal';
+export type WorkspaceView = 'HOME' | 'BRAND' | 'CRM' | 'SITE';
 
 // Canvas state types for loading/overview system
 export type CanvasState =
   | { type: 'empty' }
   | { type: 'loading' }
   | { type: 'overview' }
-  | { type: 'detail'; view: 'website' | 'brand' | 'offer' | 'plan' | 'leads' | 'clients' | 'ads' }
+  | { type: 'detail'; view: 'website' | 'brand' | 'plan' | 'leads' | 'clients' }
   | { type: 'lead-detail'; leadId: string }
   // Remix-specific states
   | { type: 'remix-crawling'; url: string; pagesDiscovered: number; pagesCrawled: number; currentPage: string }
@@ -52,16 +50,13 @@ export interface ToolStatus {
 export const TOOL_DISPLAY_NAMES: Record<string, string> = {
   'perform_market_research': 'Researching your market',
   'generate_brand_identity': 'Creating your brand',
-  'generate_business_plan': 'Setting up your offer',
   'generate_website_files': 'Building your website',
   'generate_first_week_plan': 'Planning your first week',
   'generate_leads': 'Finding prospects',
   'generate_outreach_scripts': 'Writing outreach scripts',
-  'generate_ads': 'Creating ad campaigns',
   'generate_lead_website': 'Generating website preview',
   'edit_website': 'Updating your website',
   'edit_identity': 'Updating your brand',
-  'edit_pricing': 'Updating your pricing',
   'remix_website': 'Remixing website',
 };
 
@@ -72,9 +67,7 @@ interface ProjectState {
   artifacts: {
     website: WebsiteArtifact | null;
     identity: IdentityArtifact | null;
-    ads: AdsArtifact | null;
     research: ResearchArtifact | null;
-    businessPlan: BusinessPlanArtifact | null;
     leads: LeadsArtifact | null;
     outreach: OutreachArtifact | null;
     firstWeekPlan: FirstWeekPlanArtifact | null;
@@ -90,7 +83,6 @@ interface ProjectState {
   hasStartedGeneration: boolean;
   contextView: ContextView;
   workspaceView: WorkspaceView;
-  hasSeenOnboarding: boolean;
 
   // Canvas state for loading/overview system
   canvasState: CanvasState;
@@ -119,7 +111,6 @@ interface ProjectState {
   setHasStartedGeneration: (started: boolean) => void;
   setContextView: (view: ContextView) => void;
   setWorkspaceView: (view: WorkspaceView) => void;
-  setHasSeenOnboarding: (seen: boolean) => void;
   clearProject: () => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
@@ -139,7 +130,7 @@ interface ProjectState {
   completeTool: (toolName: string, duration?: string) => void;
   failTool: (toolName: string, errorMessage: string) => void;
   resetTools: () => void;
-  retryGeneration: (artifactType: 'identity' | 'website' | 'businessPlan' | 'leads' | 'outreach') => Promise<void>;
+  retryGeneration: (artifactType: 'identity' | 'website' | 'leads' | 'outreach') => Promise<void>;
 
   // Artifact refresh action (fallback for when realtime doesn't fire)
   refreshArtifact: (type: ArtifactType) => Promise<void>;
@@ -156,9 +147,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   artifacts: {
     website: null,
     identity: null,
-    ads: null,
     research: null,
-    businessPlan: null,
     leads: null,
     outreach: null,
     firstWeekPlan: null,
@@ -172,7 +161,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   hasStartedGeneration: false,
   contextView: 'overview' as ContextView,
   workspaceView: 'HOME' as WorkspaceView,
-  hasSeenOnboarding: typeof window !== 'undefined' ? localStorage.getItem('hasSeenOnboarding') === 'true' : false,
   canvasState: { type: 'empty' } as CanvasState,
   toolStatuses: new Map<string, ToolStatus>(),
   selectedElementSelector: null,
@@ -188,9 +176,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const artifacts = {
       website: null as WebsiteArtifact | null,
       identity: null as IdentityArtifact | null,
-      ads: null as AdsArtifact | null,
       research: null as ResearchArtifact | null,
-      businessPlan: null as BusinessPlanArtifact | null,
       leads: null as LeadsArtifact | null,
       outreach: null as OutreachArtifact | null,
       firstWeekPlan: null as FirstWeekPlanArtifact | null,
@@ -210,15 +196,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       } else if (artifact.type === 'identity') {
         artifacts.identity = artifact.data as IdentityArtifact;
         console.log('[Store] Loaded identity artifact');
-      } else if (artifact.type === 'ads') {
-        artifacts.ads = artifact.data as AdsArtifact;
-        console.log('[Store] Loaded ads artifact');
       } else if (artifact.type === 'market_research') {
         artifacts.research = artifact.data as ResearchArtifact;
         console.log('[Store] Loaded research artifact');
-      } else if (artifact.type === 'business_plan') {
-        artifacts.businessPlan = artifact.data as BusinessPlanArtifact;
-        console.log('[Store] Loaded business plan artifact');
       } else if (artifact.type === 'leads') {
         artifacts.leads = artifact.data as LeadsArtifact;
         console.log('[Store] Loaded leads artifact');
@@ -329,15 +309,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           tagline: identityData.tagline,
         });
         newArtifacts.identity = identityData;
-      } else if (type === 'ads') {
-        console.log('[Store] Updating ads artifact');
-        newArtifacts.ads = artifact.data as AdsArtifact;
       } else if (type === 'market_research') {
         console.log('[Store] Updating research artifact');
         newArtifacts.research = artifact.data as ResearchArtifact;
-      } else if (type === 'business_plan') {
-        console.log('[Store] Updating business plan artifact');
-        newArtifacts.businessPlan = artifact.data as BusinessPlanArtifact;
       } else if (type === 'leads') {
         console.log('[Store] Updating leads artifact');
         newArtifacts.leads = artifact.data as LeadsArtifact;
@@ -371,13 +345,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   setWorkspaceView: (view) => set({ workspaceView: view }),
 
-  setHasSeenOnboarding: (seen) => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('hasSeenOnboarding', seen.toString());
-    }
-    set({ hasSeenOnboarding: seen });
-  },
-
   setToolRunning: (tool, isRunning) => {
     set((state) => {
       const newRunningTools = new Set(state.runningTools);
@@ -397,9 +364,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       artifacts: {
         website: null,
         identity: null,
-        ads: null,
         research: null,
-        businessPlan: null,
         leads: null,
         outreach: null,
         firstWeekPlan: null,
@@ -680,7 +645,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const retryMessages: Record<string, string> = {
       identity: 'Please regenerate the brand identity. The previous attempt failed.',
       website: 'Please regenerate the website. The previous attempt failed.',
-      businessPlan: 'Please regenerate the business plan. The previous attempt failed.',
       leads: 'Please regenerate the leads list. The previous attempt failed.',
       outreach: 'Please regenerate the outreach scripts. The previous attempt failed.',
     };

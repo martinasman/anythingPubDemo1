@@ -8,7 +8,7 @@
 
 import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
-import type { FirstWeekPlanArtifact, BusinessPlanArtifact } from '@/types/database';
+import type { FirstWeekPlanArtifact } from '@/types/database';
 
 // ============================================
 // SCHEMA DEFINITION
@@ -609,39 +609,7 @@ export async function generateFirstWeekPlan(
         }
       : null;
 
-    if (!quickWinPackage) {
-      // Fetch business plan to get Quick Win package
-      const { data: businessPlanArtifact } = await (supabase
-        .from('artifacts') as any)
-        .select('data')
-        .eq('project_id', projectId)
-        .eq('type', 'business_plan')
-        .single();
-
-      if (businessPlanArtifact?.data) {
-        const businessPlan = businessPlanArtifact.data as BusinessPlanArtifact;
-        // Look for Quick Win or entry-level package
-        const quickWin =
-          businessPlan.servicePackages?.find(
-            (p) =>
-              p.name.toLowerCase().includes('quick') ||
-              p.name.toLowerCase().includes('starter') ||
-              p.name.toLowerCase().includes('basic') ||
-              p.name.toLowerCase().includes('entry')
-          ) || businessPlan.servicePackages?.[0];
-
-        if (quickWin) {
-          const priceNum = parseInt(quickWin.price.replace(/[^0-9]/g, ''));
-          quickWinPackage = {
-            name: quickWin.name,
-            price: priceNum || 500,
-            deliverables: quickWin.deliverables || [],
-          };
-        }
-      }
-    }
-
-    // Default package if nothing found
+    // Default package if nothing found from schema
     if (!quickWinPackage) {
       quickWinPackage = {
         name: 'Starter Package',

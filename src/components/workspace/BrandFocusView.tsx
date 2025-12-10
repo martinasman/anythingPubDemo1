@@ -1,14 +1,13 @@
 'use client';
 
 import { useProjectStore } from '@/store/projectStore';
-import { Sparkles, Target, DollarSign, Palette, Type } from 'lucide-react';
+import { Sparkles, Palette, Type } from 'lucide-react';
 
 export default function BrandFocusView() {
   const { artifacts, runningTools } = useProjectStore();
 
   const isIdentityLoading = runningTools.has('identity');
   const identity = artifacts.identity;
-  const businessPlan = artifacts.businessPlan;
 
   // Loading state
   if (isIdentityLoading && !identity) {
@@ -127,64 +126,6 @@ export default function BrandFocusView() {
             </div>
           </div>
         </div>
-
-        {/* Value Proposition */}
-        {businessPlan?.valueProposition && (
-          <div className="p-4 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800">
-            <div className="flex items-center gap-2 mb-3">
-              <Target size={16} className="text-blue-500" />
-              <h3 className="text-sm font-semibold text-blue-700 dark:text-blue-300 uppercase tracking-wide">
-                Value Proposition
-              </h3>
-            </div>
-            <p className="text-base text-zinc-700 dark:text-slate-300 leading-relaxed">
-              {businessPlan.valueProposition}
-            </p>
-          </div>
-        )}
-
-        {/* Pricing Tiers */}
-        {businessPlan?.pricingTiers && businessPlan.pricingTiers.length > 0 && (
-          <div className="p-4 rounded-xl bg-zinc-50 dark:bg-slate-800 border border-zinc-100 dark:border-slate-700">
-            <div className="flex items-center gap-2 mb-4">
-              <DollarSign size={16} className="text-blue-500" />
-              <h3 className="text-sm font-semibold text-zinc-700 dark:text-slate-300 uppercase tracking-wide">
-                Pricing Tiers
-              </h3>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {businessPlan.pricingTiers.map((tier, index) => (
-                <div
-                  key={index}
-                  className="p-4 rounded-lg bg-white dark:bg-slate-900 border border-zinc-200 dark:border-slate-700"
-                >
-                  <div className="flex items-baseline justify-between mb-2">
-                    <h4 className="text-sm font-semibold text-zinc-900 dark:text-white">
-                      {tier.name}
-                    </h4>
-                    <span className="text-lg font-bold text-blue-600 dark:text-blue-400">
-                      {tier.price}
-                    </span>
-                  </div>
-                  {tier.features && tier.features.length > 0 && (
-                    <ul className="space-y-1">
-                      {tier.features.slice(0, 3).map((feature, fIndex) => (
-                        <li key={fIndex} className="text-xs text-zinc-500 dark:text-slate-400">
-                          {feature}
-                        </li>
-                      ))}
-                      {tier.features.length > 3 && (
-                        <li className="text-xs text-blue-500">
-                          +{tier.features.length - 3} more features
-                        </li>
-                      )}
-                    </ul>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

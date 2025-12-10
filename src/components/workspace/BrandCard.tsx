@@ -1,16 +1,15 @@
 'use client';
 
-import { Sparkles, DollarSign, Target } from 'lucide-react';
-import type { IdentityArtifact, BusinessPlanArtifact } from '@/types/database';
+import { Sparkles } from 'lucide-react';
+import type { IdentityArtifact } from '@/types/database';
 
 interface BrandCardProps {
   identity: IdentityArtifact | null;
-  businessPlan: BusinessPlanArtifact | null;
   isLoading: boolean;
   onClick?: () => void;
 }
 
-export default function BrandCard({ identity, businessPlan, isLoading, onClick }: BrandCardProps) {
+export default function BrandCard({ identity, isLoading, onClick }: BrandCardProps) {
   // Loading state
   if (isLoading && !identity) {
     return (
@@ -45,9 +44,6 @@ export default function BrandCard({ identity, businessPlan, isLoading, onClick }
       </div>
     );
   }
-
-  // Get first pricing tier if available
-  const firstTier = businessPlan?.pricingTiers?.[0];
 
   return (
     <div
@@ -88,47 +84,6 @@ export default function BrandCard({ identity, businessPlan, isLoading, onClick }
         </div>
       </div>
 
-      {/* Value Proposition - compact */}
-      {businessPlan?.valueProposition && (
-        <div className="mb-2 flex-shrink-0">
-          <div className="flex items-center gap-1.5 mb-1">
-            <Target size={12} className="text-blue-500" />
-            <span className="text-[10px] font-semibold text-zinc-500 dark:text-slate-400 uppercase tracking-wide">
-              Value Prop
-            </span>
-          </div>
-          <p className="text-xs text-zinc-600 dark:text-slate-300 line-clamp-2">
-            {businessPlan.valueProposition}
-          </p>
-        </div>
-      )}
-
-      {/* Pricing Preview - compact */}
-      {firstTier && (
-        <div className="mt-auto">
-          <div className="flex items-center gap-1.5 mb-1">
-            <DollarSign size={12} className="text-blue-500" />
-            <span className="text-[10px] font-semibold text-zinc-500 dark:text-slate-400 uppercase tracking-wide">
-              Starting at
-            </span>
-          </div>
-          <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800">
-            <div className="flex items-baseline justify-between">
-              <span className="text-xs font-medium text-zinc-800 dark:text-white">
-                {firstTier.name}
-              </span>
-              <span className="text-sm font-bold text-blue-600 dark:text-blue-400">
-                {firstTier.price}
-              </span>
-            </div>
-            {businessPlan.pricingTiers.length > 1 && (
-              <p className="text-[10px] text-blue-500 mt-1">
-                +{businessPlan.pricingTiers.length - 1} more tiers
-              </p>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

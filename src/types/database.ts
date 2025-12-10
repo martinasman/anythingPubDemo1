@@ -45,18 +45,6 @@ export type IdentityArtifact = {
   tagline?: string;
 };
 
-export type AdsArtifact = {
-  ads: Array<{
-    id: string;
-    imageUrl: string;
-    headline: string;
-    bodyText: string;
-    cta: string;
-    platform: 'facebook' | 'instagram' | 'google' | 'linkedin' | 'tiktok';
-    format: 'square' | 'story' | 'landscape';
-  }>;
-};
-
 export type ExtractedCompetitor = {
   name: string;
   url: string;
@@ -122,24 +110,6 @@ export type ResearchArtifact = {
   };
   // NEW: Market intelligence data
   marketIntelligence?: MarketIntelligence;
-};
-
-export type BusinessPlanArtifact = {
-  executiveSummary: string;
-  revenueModel: string;
-  pricingTiers: Array<{
-    name: string;
-    price: string;
-    features: string[];
-  }>;
-  servicePackages: Array<{
-    name: string;
-    description: string;
-    deliverables: string[];
-    price: string;
-  }>;
-  targetMarket: string;
-  valueProposition: string;
 };
 
 // Website analysis result from websiteAnalyzer service
@@ -486,9 +456,7 @@ export type LeadActivity = {
 export type ArtifactData =
   | WebsiteArtifact
   | IdentityArtifact
-  | AdsArtifact
   | ResearchArtifact
-  | BusinessPlanArtifact
   | LeadsArtifact
   | OutreachArtifact
   | FirstWeekPlanArtifact
@@ -534,9 +502,7 @@ export type Project = {
 export type ArtifactType =
   | 'website_code'
   | 'identity'
-  | 'ads'
   | 'market_research'
-  | 'business_plan'
   | 'leads'
   | 'outreach'
   | 'first_week_plan'
@@ -692,16 +658,8 @@ export function isIdentityArtifact(data: ArtifactData): data is IdentityArtifact
   return 'logoUrl' in data && 'colors' in data && 'font' in data;
 }
 
-export function isAdsArtifact(data: ArtifactData): data is AdsArtifact {
-  return 'ads' in data && Array.isArray((data as AdsArtifact).ads);
-}
-
 export function isResearchArtifact(data: ArtifactData): data is ResearchArtifact {
   return 'competitors' in data && 'marketSummary' in data;
-}
-
-export function isBusinessPlanArtifact(data: ArtifactData): data is BusinessPlanArtifact {
-  return 'executiveSummary' in data && 'pricingTiers' in data;
 }
 
 export function isLeadsArtifact(data: ArtifactData): data is LeadsArtifact {

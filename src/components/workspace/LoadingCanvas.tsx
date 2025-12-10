@@ -150,10 +150,9 @@ export default function LoadingCanvas() {
           const errorTool = Array.from(toolStatuses.values()).find(t => t.name === expandedError);
           if (errorTool?.status === 'error' && errorTool?.errorMessage) {
             // Map tool names to artifact types for retry
-            const retryMap: Record<string, 'identity' | 'website' | 'businessPlan' | 'leads' | 'outreach'> = {
+            const retryMap: Record<string, 'identity' | 'website' | 'leads' | 'outreach'> = {
               'generate_brand_identity': 'identity',
               'generate_website_files': 'website',
-              'generate_business_plan': 'businessPlan',
               'generate_leads': 'leads',
               'generate_outreach_scripts': 'outreach',
             };

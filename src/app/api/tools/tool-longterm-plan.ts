@@ -8,7 +8,7 @@
 
 import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
-import type { LongTermPlanArtifact, BusinessPlanArtifact, ResearchArtifact } from '@/types/database';
+import type { LongTermPlanArtifact, ResearchArtifact } from '@/types/database';
 
 // ============================================
 // SCHEMA DEFINITION
@@ -394,14 +394,6 @@ export async function generateLongTermPlan(
       process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     );
 
-    // Fetch business plan for context
-    const { data: businessPlanArtifact } = await (supabase
-      .from('artifacts') as any)
-      .select('data')
-      .eq('project_id', projectId)
-      .eq('type', 'business_plan')
-      .single();
-
     // Fetch market research for insights
     const { data: marketResearchArtifact } = await (supabase
       .from('artifacts') as any)
@@ -411,19 +403,10 @@ export async function generateLongTermPlan(
       .single();
 
     // Build context from existing artifacts
-    const businessPlan = businessPlanArtifact?.data as BusinessPlanArtifact | undefined;
     const marketResearch = marketResearchArtifact?.data as ResearchArtifact | undefined;
 
-    // Calculate average client value from pricing
-    let avgClientValue = 1500; // Default
-    if (businessPlan?.servicePackages?.length) {
-      const prices = businessPlan.servicePackages
-        .map((p) => parseInt(p.price.replace(/[^0-9]/g, '')))
-        .filter((p) => p > 0);
-      if (prices.length > 0) {
-        avgClientValue = Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
-      }
-    }
+    // Default average client value
+    const avgClientValue = 1500;
 
     // Build market insights summary
     let marketInsights: string | undefined;
@@ -438,8 +421,8 @@ export async function generateLongTermPlan(
 
     const context: BusinessContext = {
       businessType,
-      pricingTiers: businessPlan?.pricingTiers || [],
-      servicePackages: businessPlan?.servicePackages || [],
+      pricingTiers: [],
+      servicePackages: [],
       averageClientValue: avgClientValue,
       marketInsights,
     };

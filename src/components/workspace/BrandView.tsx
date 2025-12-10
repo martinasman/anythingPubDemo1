@@ -1,7 +1,7 @@
 'use client';
 
 import { useProjectStore } from '@/store/projectStore';
-import { Sparkles, Target, Palette, Type, ArrowLeft, AlertCircle } from 'lucide-react';
+import { Sparkles, Palette, Type, ArrowLeft, AlertCircle } from 'lucide-react';
 import { useCanvasBackground } from '@/hooks/useCanvasBackground';
 
 export default function BrandView() {
@@ -10,7 +10,6 @@ export default function BrandView() {
 
   const isIdentityLoading = runningTools.has('identity');
   const identity = artifacts.identity;
-  const businessPlan = artifacts.businessPlan;
 
   // Dynamic styling based on background
   const cardBg = 'backdrop-blur-sm border border-zinc-800/30 dark:border-zinc-200/10';
@@ -178,21 +177,6 @@ export default function BrandView() {
             </div>
           </div>
         </div>
-
-        {/* Value Proposition */}
-        {businessPlan?.valueProposition && (
-          <div className={`p-5 rounded-xl ${cardBg}`}>
-            <div className="flex items-center gap-2 mb-3">
-              <Target size={18} className={isDark ? 'text-zinc-500' : 'text-zinc-400'} />
-              <h3 className={`text-sm font-semibold ${isDark ? 'text-zinc-300' : 'text-zinc-700'} uppercase tracking-wide`}>
-                Value Proposition
-              </h3>
-            </div>
-            <p className={`text-base ${isDark ? 'text-zinc-300' : 'text-zinc-700'} leading-relaxed`}>
-              {businessPlan.valueProposition}
-            </p>
-          </div>
-        )}
       </div>
     </div>
   );

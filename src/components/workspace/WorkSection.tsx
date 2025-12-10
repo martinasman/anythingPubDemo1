@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Loader2, Check, ChevronDown } from 'lucide-react';
+import { Loader2, Check, ChevronDown, FileText } from 'lucide-react';
 
 // ============================================
-// WORK ITEM TYPE
+// TYPES
 // ============================================
 
 export interface ProgressStage {
@@ -12,6 +12,25 @@ export interface ProgressStage {
   message: string;
   status: 'pending' | 'active' | 'complete';
   timestamp: number;
+}
+
+export interface FileEvent {
+  action: 'create' | 'modify';
+  path: string;
+  timestamp: number;
+}
+
+export interface ActivityEvent {
+  action: 'read' | 'search' | 'thought' | 'analyze' | 'generate' | 'write';
+  target: string;
+  duration?: string;
+  timestamp: number;
+}
+
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  cost: number;
 }
 
 export interface WorkItem {
@@ -22,6 +41,37 @@ export interface WorkItem {
   errorMessage?: string;
   stages?: ProgressStage[];
   currentStage?: string;
+  files?: FileEvent[];
+  activities?: ActivityEvent[];
+}
+
+// ============================================
+// ACTIVITY ICONS
+// ============================================
+
+const ACTIVITY_ICONS: Record<string, string> = {
+  read: '→',
+  search: '→',
+  thought: '→',
+  analyze: '→',
+  generate: '→',
+  write: '→',
+};
+
+function formatActivity(activity: ActivityEvent): string {
+  const actionLabels: Record<string, string> = {
+    read: 'Read',
+    search: 'Searched for',
+    thought: 'Thought for',
+    analyze: 'Analyzing',
+    generate: 'Generating',
+    write: 'Writing',
+  };
+  const label = actionLabels[activity.action] || activity.action;
+  if (activity.action === 'thought' && activity.duration) {
+    return `${label} ${activity.duration}`;
+  }
+  return `${label} ${activity.target}`;
 }
 
 // ============================================
@@ -75,9 +125,11 @@ function RunningTimeIndicator() {
 
 interface WorkSectionProps {
   items: WorkItem[];
+  thinkingMessages?: string[];
+  tokenUsage?: TokenUsage;
 }
 
-export function WorkSection({ items }: WorkSectionProps) {
+export function WorkSection({ items, thinkingMessages = [], tokenUsage }: WorkSectionProps) {
   const [isOpen, setIsOpen] = useState(true);
 
   // Auto-collapse when all items complete (don't depend on isStreaming - it has timing issues)
@@ -125,20 +177,43 @@ export function WorkSection({ items }: WorkSectionProps) {
           )}
           {headerText}
         </span>
-        <ChevronDown
-          className={`h-4 w-4 text-zinc-500 dark:text-zinc-400 transition-transform duration-200 ${
-            isOpen ? 'rotate-180' : ''
-          }`}
-        />
+        <span className="flex items-center gap-2">
+          {/* Token cost badge */}
+          {tokenUsage && tokenUsage.cost > 0 && (
+            <span className="text-xs text-zinc-500 dark:text-zinc-400 font-mono bg-zinc-200 dark:bg-zinc-700 px-1.5 py-0.5 rounded">
+              ${tokenUsage.cost.toFixed(3)}
+            </span>
+          )}
+          <ChevronDown
+            className={`h-4 w-4 text-zinc-500 dark:text-zinc-400 transition-transform duration-200 ${
+              isOpen ? 'rotate-180' : ''
+            }`}
+          />
+        </span>
       </button>
 
       {/* Content - collapsible */}
       <div
         className={`transition-all duration-300 ease-out ${
-          isOpen ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'
-        } overflow-hidden`}
+          isOpen ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0'
+        } overflow-hidden overflow-y-auto`}
       >
         <div className="px-4 pb-4 pt-2 space-y-3">
+          {/* Thinking messages section */}
+          {thinkingMessages.length > 0 && (
+            <div className="space-y-1.5 mb-3">
+              {thinkingMessages.map((msg, i) => (
+                <div
+                  key={i}
+                  className="flex items-start gap-2 text-xs text-zinc-500 dark:text-zinc-400 animate-slide-in"
+                >
+                  <span className="flex-shrink-0">→</span>
+                  <span className="italic">{msg}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {items.map((item) => (
             <div key={item.toolName} className="space-y-2">
               {/* Main tool item */}
@@ -202,6 +277,49 @@ export function WorkSection({ items }: WorkSectionProps) {
                       </div>
                     );
                   })}
+                </div>
+              )}
+
+              {/* Activity timeline (Lovable-style) */}
+              {item.activities && item.activities.length > 0 && (
+                <div className="ml-6 pl-3 border-l-2 border-blue-200 dark:border-blue-800 space-y-1">
+                  {item.activities.slice(-8).map((activity, idx) => {
+                    const isLatest = idx === item.activities!.slice(-8).length - 1 && item.status === 'running';
+                    return (
+                      <div
+                        key={`${activity.action}-${activity.target}-${idx}`}
+                        className={`flex items-center gap-2 text-xs py-0.5 animate-slide-in ${
+                          isLatest ? 'text-blue-600 dark:text-blue-400' : 'text-zinc-500 dark:text-zinc-400'
+                        }`}
+                      >
+                        <span className="flex-shrink-0">{ACTIVITY_ICONS[activity.action] || '•'}</span>
+                        <span className={isLatest ? 'font-medium' : ''}>
+                          {formatActivity(activity)}
+                        </span>
+                        {isLatest && (
+                          <span className="text-blue-400 dark:text-blue-500 text-[10px] ml-auto">← now</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* File events (if any) */}
+              {item.files && item.files.length > 0 && (
+                <div className="ml-6 pl-3 border-l-2 border-zinc-300 dark:border-zinc-600 space-y-1">
+                  {item.files.map((file, idx) => (
+                    <div
+                      key={`${file.path}-${idx}`}
+                      className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400 py-0.5 animate-slide-in"
+                    >
+                      <FileText className="h-3 w-3 flex-shrink-0" />
+                      <span className="font-mono">{file.path}</span>
+                      {file.action === 'create' && (
+                        <span className="text-green-500 text-[10px] font-medium">+new</span>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

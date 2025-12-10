@@ -1,13 +1,12 @@
 'use client';
 
-import { Sparkles, Users, Globe, DollarSign } from 'lucide-react';
-import { useProjectStore, type WorkspaceView } from '@/store/projectStore';
+import { Sparkles, Users, Globe } from 'lucide-react';
+import { useProjectStore } from '@/store/projectStore';
 import { useMemo } from 'react';
 
 const TAB_CONFIG = [
   { id: 'SITE' as const, label: 'Website', icon: Globe, viewId: 'website' },
   { id: 'BRAND' as const, label: 'Brand', icon: Sparkles, viewId: 'identity' },
-  { id: 'FINANCE' as const, label: 'Offer', icon: DollarSign, viewId: 'business-plan' },
   { id: 'CRM' as const, label: 'Leads', icon: Users, viewId: 'crm' },
 ];
 
@@ -22,7 +21,6 @@ export default function TabBar() {
       // Show tab only if artifact exists
       if (tab.id === 'SITE') return !!artifacts.website;
       if (tab.id === 'BRAND') return !!artifacts.identity;
-      if (tab.id === 'FINANCE') return !!artifacts.businessPlan;
       if (tab.id === 'CRM') return !!artifacts.leads;
 
       return false;

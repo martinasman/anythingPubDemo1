@@ -15,17 +15,9 @@ const BANNER_CONTENT: Record<WorkspaceView, { title: string; subtitle: string }>
     title: 'TODAY',
     subtitle: 'Brand identity and visual assets',
   },
-  FINANCE: {
-    title: 'TODAY',
-    subtitle: 'Business plan and financial projections',
-  },
   CRM: {
     title: 'TODAY',
     subtitle: 'Customer relationship management',
-  },
-  ADS: {
-    title: 'TODAY',
-    subtitle: 'Ads and marketing content',
   },
 };
 

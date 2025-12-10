@@ -21,7 +21,7 @@ interface PendingImage {
 import Image from 'next/image';
 import { useProjectStore, type WorkspaceView } from '@/store/projectStore';
 import { TOOL_DISPLAY_NAMES } from '@/store/projectStore';
-import { WorkSection, type WorkItem, type ProgressStage } from './WorkSection';
+import { WorkSection, type WorkItem, type ProgressStage, type ActivityEvent } from './WorkSection';
 import { CodeChangeViewer, type CodeChange } from './CodeChangeViewer';
 import { WaveText } from '../ui/WaveText';
 
@@ -104,9 +104,7 @@ const PLACEHOLDER_BY_VIEW: Record<WorkspaceView, string> = {
   HOME: 'Ask anything...',
   SITE: 'Edit your website...',
   BRAND: 'Refine your brand identity...',
-  FINANCE: 'Update your pricing and offer...',
   CRM: 'Manage your leads and outreach...',
-  ADS: 'Create ads and marketing content...',
 };
 
 // Get placeholder based on context (mode-aware, lead-aware)
@@ -122,14 +120,12 @@ const getPlaceholder = (workspaceView: WorkspaceView, currentLeadName: string | 
 const TOOL_EMOJIS: Record<string, string> = {
   'perform_market_research': '🔍',
   'generate_brand_identity': '✨',
-  'generate_business_plan': '📊',
   'generate_website_files': '🌐',
   'generate_first_week_plan': '📅',
   'generate_leads': '🎯',
   'generate_outreach_scripts': '📧',
   'edit_website': '🌐',
   'edit_identity': '✨',
-  'edit_pricing': '💰',
   'remix_website': '🔄',
 };
 
@@ -190,6 +186,10 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
   const [chatMode, setChatMode] = useState<ChatMode>('edit');
   const [workItems, setWorkItems] = useState<Record<string, WorkItem>>({});
   const [codeChanges, setCodeChanges] = useState<Record<string, CodeChange[]>>({});
+  const [lastError, setLastError] = useState<{ message: string; toolName: string } | null>(null);
+  // New state for enhanced progress UI
+  const [thinkingMessages, setThinkingMessages] = useState<string[]>([]);
+  const [tokenUsage, setTokenUsage] = useState<{ promptTokens: number; completionTokens: number; cost: number } | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const modeDropdownRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -398,6 +398,7 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
     // Clear input immediately
     setInput('');
     setIsLoading(true);
+    setLastError(null); // Clear any previous error
 
     // Clear selected element after sending (user intent has been captured)
     if (selectedElementSelector) {
@@ -471,43 +472,37 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
       }
 
       // Tool name to store ToolType mapping
-      const toolNameToType: Record<string, 'research' | 'identity' | 'website' | 'businessplan' | 'leads' | 'outreach'> = {
+      const toolNameToType: Record<string, 'research' | 'identity' | 'website' | 'leads' | 'outreach'> = {
         'perform_market_research': 'research',
         'generate_brand_identity': 'identity',
         'generate_website_files': 'website',
-        'generate_business_plan': 'businessplan',
         'generate_leads': 'leads',
         'generate_outreach_scripts': 'outreach',
         // Edit tools map to the same artifact types
         'edit_website': 'website',
         'edit_identity': 'identity',
-        'edit_pricing': 'businessplan',
         // Remix tool generates website
         'remix_website': 'website',
       };
 
       // Tool name to workspace view mapping for AI auto-switch
-      const toolNameToView: Record<string, 'HOME' | 'BRAND' | 'CRM' | 'SITE' | 'FINANCE'> = {
+      const toolNameToView: Record<string, 'HOME' | 'BRAND' | 'CRM' | 'SITE'> = {
         'generate_website_files': 'SITE',
         'edit_website': 'SITE',
         'generate_brand_identity': 'BRAND',
         'edit_identity': 'BRAND',
-        'generate_business_plan': 'FINANCE',
-        'edit_pricing': 'FINANCE',
         'generate_leads': 'CRM',
         'generate_outreach_scripts': 'CRM',
         'remix_website': 'SITE',
       };
 
       // Tool name to artifact type for refresh (MUST be defined before streaming loop)
-      const toolNameToArtifactType: Record<string, 'website_code' | 'identity' | 'market_research' | 'business_plan' | 'leads' | 'outreach' | 'crawled_site'> = {
+      const toolNameToArtifactType: Record<string, 'website_code' | 'identity' | 'market_research' | 'leads' | 'outreach' | 'crawled_site'> = {
         'generate_website_files': 'website_code',
         'edit_website': 'website_code',
         'generate_brand_identity': 'identity',
         'edit_identity': 'identity',
         'perform_market_research': 'market_research',
-        'generate_business_plan': 'business_plan',
-        'edit_pricing': 'business_plan',
         'generate_leads': 'leads',
         'generate_outreach_scripts': 'outreach',
         'remix_website': 'website_code',
@@ -516,6 +511,8 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
       // Reset work items and code changes tracking
       setWorkItems({});
       setCodeChanges({});
+      setThinkingMessages([]); // Reset thinking messages for new conversation
+      setTokenUsage(null); // Reset token usage for new conversation
       resetTools(); // Reset canvas tool statuses
 
       // Track if we've started any tools (for canvas state transition)
@@ -567,8 +564,6 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
                 'generate_brand_identity': 'identity',
                 'edit_identity': 'identity',
                 'perform_market_research': 'research',
-                'generate_business_plan': 'businessPlan',
-                'edit_pricing': 'businessPlan',
               };
 
               const requiredArtifactKey = toolToArtifactKey[activeGenerationTool];
@@ -812,6 +807,9 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
             failTool(toolName, errorMessage);
 
             if (toolType) setToolRunning(toolType, false);
+
+            // Store error for "Try fixing" button
+            setLastError({ message: errorMessage, toolName });
           }
 
           // Parse [CODE_CHANGE:file:description|before|after] markers
@@ -876,6 +874,89 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
             });
           }
 
+          // Parse [TOKENS:input:output:cost] markers for cost tracking
+          const tokenMatches = chunk.matchAll(/\[TOKENS:(\d+):(\d+):([\d.]+)\]/g);
+          for (const match of tokenMatches) {
+            const [, promptTokens, completionTokens, cost] = match;
+            console.log('[ChatPanel] 💰 Tokens:', promptTokens, 'in /', completionTokens, 'out = $' + cost);
+            setTokenUsage(prev => ({
+              promptTokens: (prev?.promptTokens || 0) + parseInt(promptTokens),
+              completionTokens: (prev?.completionTokens || 0) + parseInt(completionTokens),
+              cost: (prev?.cost || 0) + parseFloat(cost),
+            }));
+          }
+
+          // Parse [THINKING:message] markers for AI reasoning display
+          const thinkingMatches = chunk.matchAll(/\[THINKING:([^\]]+)\]/g);
+          for (const match of thinkingMatches) {
+            const [, message] = match;
+            console.log('[ChatPanel] 💭 Thinking:', message);
+            setThinkingMessages(prev => [...prev, message]);
+          }
+
+          // Parse [FILE:action:path] markers for file creation events
+          const fileMatches = chunk.matchAll(/\[FILE:(create|modify):([^\]]+)\]/g);
+          for (const match of fileMatches) {
+            const [, action, path] = match;
+            console.log('[ChatPanel] 📄 File:', action, path);
+
+            setWorkItems(prev => {
+              // Find the currently running tool to add this file to
+              const runningToolName = Object.keys(prev).find(k => prev[k].status === 'running');
+              if (!runningToolName) return prev;
+
+              const currentTool = prev[runningToolName];
+              const existingFiles = currentTool.files || [];
+
+              return {
+                ...prev,
+                [runningToolName]: {
+                  ...currentTool,
+                  files: [
+                    ...existingFiles,
+                    {
+                      action: action as 'create' | 'modify',
+                      path,
+                      timestamp: Date.now(),
+                    },
+                  ],
+                },
+              };
+            });
+          }
+
+          // Parse [ACTIVITY:action:target:duration?] markers for Lovable-style activity feed
+          const activityMatches = chunk.matchAll(/\[ACTIVITY:(\w+):([^:\]]+)(?::([^\]]+))?\]/g);
+          for (const match of activityMatches) {
+            const [, action, target, duration] = match;
+            console.log('[ChatPanel] 🎯 Activity:', action, target, duration || '');
+
+            setWorkItems(prev => {
+              // Find the currently running tool to add this activity to
+              const runningToolName = Object.keys(prev).find(k => prev[k].status === 'running');
+              if (!runningToolName) return prev;
+
+              const currentTool = prev[runningToolName];
+              const existingActivities = currentTool.activities || [];
+
+              return {
+                ...prev,
+                [runningToolName]: {
+                  ...currentTool,
+                  activities: [
+                    ...existingActivities,
+                    {
+                      action: action as ActivityEvent['action'],
+                      target,
+                      duration,
+                      timestamp: Date.now(),
+                    },
+                  ],
+                },
+              };
+            });
+          }
+
           // Remove all markers from displayed content (including legacy markers for backwards compatibility)
           const cleanChunk = chunk
             .replace(/\[WORK:\w+:[^\]]+\]\n?/g, '')
@@ -885,6 +966,11 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
             .replace(/\[CODE_CHANGE:[^\]]+\]\n?/g, '')
             // Status markers for immediate feedback
             .replace(/\[STATUS:[^\]]+\]\n?/g, '')
+            // New enhanced progress markers
+            .replace(/\[TOKENS:\d+:\d+:[\d.]+\]\n?/g, '')
+            .replace(/\[THINKING:[^\]]+\]\n?/g, '')
+            .replace(/\[FILE:(create|modify):[^\]]+\]\n?/g, '')
+            .replace(/\[ACTIVITY:\w+:[^\]]+\]\n?/g, '')
             // Remix progress markers
             .replace(/\[REMIX_STATUS:[^\]]+\]\n?/g, '')
             .replace(/\[REMIX_CRAWL:[^\]]+\]\n?/g, '')
@@ -1039,6 +1125,8 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
                         {hasWorkItems && (
                           <WorkSection
                             items={Object.values(workItems)}
+                            thinkingMessages={thinkingMessages}
+                            tokenUsage={tokenUsage || undefined}
                           />
                         )}
 
@@ -1094,6 +1182,22 @@ export default function ChatPanel({ projectName = 'New Project' }: ChatPanelProp
               );
             })}
           </>
+        )}
+
+        {/* Try Fixing Error Button - shows after error occurs */}
+        {lastError && !isLoading && (
+          <div className="flex justify-start px-3 py-2">
+            <button
+              onClick={() => {
+                const fixPrompt = `The previous operation "${lastError.toolName}" failed with error: "${lastError.message}". Please try to fix this issue and retry.`;
+                handleSendMessage(fixPrompt);
+              }}
+              className="flex items-center gap-2 px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 dark:text-red-400 rounded-lg text-sm font-medium transition-colors border border-red-500/20"
+            >
+              <span>🔧</span>
+              <span>Try fixing error</span>
+            </button>
+          </div>
         )}
       </div>
 

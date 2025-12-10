@@ -5,15 +5,12 @@ import type { ArtifactType } from '@/types/database';
 import { performMarketResearch, researchSchema } from '../tools/tool-research';
 import { generateBrandIdentity, designSchema } from '../tools/tool-design';
 import { generateWebsiteFiles, codeGenSchema } from '../tools/tool-code';
-import { generateBusinessPlan, businessPlanSchema } from '../tools/tool-businessplan';
 import { generateLeads, leadsSchema } from '../tools/tool-leads';
 import { generateOutreachScripts, outreachSchema } from '../tools/tool-outreach';
 import { generateFirstWeekPlan, firstWeekPlanSchema } from '../tools/tool-first-week-plan';
-import { generateAds, adsSchema } from '../tools/tool-ads';
 // Edit tools for modifying existing artifacts
 import { editWebsiteFiles, editWebsiteSchema } from '../tools/tool-edit-website';
 import { editBrandIdentity, editIdentitySchema } from '../tools/tool-edit-identity';
-import { editPricing, editPricingSchema } from '../tools/tool-edit-pricing';
 import { addWebsitePage, addPageSchema } from '../tools/tool-add-page';
 // CRM tool
 import { manageCRM, crmSchema } from '../tools/tool-crm';
@@ -31,19 +28,43 @@ import { ORCHESTRATOR_SYSTEM_PROMPT } from '@/config/agentPrompts';
 const TOOL_DISPLAY_NAMES: Record<string, string> = {
   perform_market_research: 'Researching your market',
   generate_brand_identity: 'Creating your brand',
-  generate_business_plan: 'Setting up your offer',
   generate_website_files: 'Building your website',
   generate_first_week_plan: 'Planning your first week',
   generate_leads: 'Finding prospects',
   generate_outreach_scripts: 'Writing outreach scripts',
-  generate_ads: 'Creating ad campaigns',
   generate_image: 'Generating image',
-  edit_website: 'Editing with Claude 3.5 Haiku',
+  edit_website: 'Editing website',
   edit_identity: 'Updating brand',
-  edit_pricing: 'Updating pricing',
   add_page: 'Adding new page',
   manage_crm: 'Managing clients',
   remix_website: 'Remixing website',
+};
+
+// ============================================
+// MODEL PRICING (per 1M tokens in USD)
+// ============================================
+
+const MODEL_PRICING: Record<string, { input: number; output: number }> = {
+  // Anthropic
+  'anthropic/claude-sonnet-4': { input: 3, output: 15 },
+  'anthropic/claude-3.5-sonnet': { input: 3, output: 15 },
+  'anthropic/claude-3-haiku': { input: 0.25, output: 1.25 },
+  // Google
+  'google/gemini-2.0-flash-001': { input: 0.1, output: 0.4 },
+  'google/gemini-flash-1.5': { input: 0.075, output: 0.3 },
+  'google/gemini-pro-1.5': { input: 1.25, output: 5 },
+  // OpenAI
+  'openai/gpt-4o': { input: 2.5, output: 10 },
+  'openai/gpt-4o-mini': { input: 0.15, output: 0.6 },
+  'openai/gpt-4-turbo': { input: 10, output: 30 },
+  // xAI
+  'x-ai/grok-2': { input: 2, output: 10 },
+  'x-ai/grok-beta': { input: 5, output: 15 },
+  // DeepSeek
+  'deepseek/deepseek-chat': { input: 0.14, output: 0.28 },
+  'deepseek/deepseek-coder': { input: 0.14, output: 0.28 },
+  // Moonshot (Kimi)
+  'moonshotai/moonshot-v1-128k': { input: 0.6, output: 0.6 },
 };
 
 // ============================================
@@ -245,14 +266,6 @@ Discuss ideas, create plans, outline features. You can make changes if explicitl
           return await generateBrandIdentity({ ...params, projectId });
         },
       }),
-      generate_business_plan: tool({
-        description:
-          'Generate a complete business plan with pricing tiers, service packages, revenue model, and value proposition',
-        inputSchema: businessPlanSchema,
-        execute: async (params) => {
-          return await generateBusinessPlan({ ...params, projectId });
-        },
-      }),
       generate_website_files: tool({
         description:
           'Generate a COMPLETE new website from scratch for NEW projects only. DO NOT use for edits. If user says "change font", "update colors", "make it more X", use edit_website instead.',
@@ -285,7 +298,17 @@ Discuss ideas, create plans, outline features. You can make changes if explicitl
             imageContext, // Pass image context for embedding/reference
             leadId, // Pass lead ID for lead website generation
             onProgress: async (stage, message) => {
-              await writeProgress(`[WORK_PROGRESS:generate_website_files:${message}]\n`);
+              // Route different stage types to appropriate markers
+              if (stage === 'activity') {
+                // Lovable-style activity feed: [ACTIVITY:action:target:duration?]
+                await writeProgress(`[ACTIVITY:${message}]\n`);
+              } else if (stage === 'thinking') {
+                await writeProgress(`[THINKING:${message}]\n`);
+              } else if (stage === 'file_create') {
+                await writeProgress(`[FILE:create:${message}]\n`);
+              } else {
+                await writeProgress(`[WORK_PROGRESS:generate_website_files:${message}]\n`);
+              }
             },
           });
         },
@@ -318,14 +341,6 @@ Discuss ideas, create plans, outline features. You can make changes if explicitl
         inputSchema: firstWeekPlanSchema,
         execute: async (params) => {
           return await generateFirstWeekPlan({ ...params, projectId });
-        },
-      }),
-      generate_ads: tool({
-        description:
-          'Generate ad creatives and copy for multiple platforms (Facebook, Instagram, Google, LinkedIn). Creates eye-catching images and persuasive copy optimized for each platform.',
-        inputSchema: adsSchema,
-        execute: async (params) => {
-          return await generateAds({ ...params, projectId });
         },
       }),
       generate_image: tool({
@@ -381,23 +396,6 @@ Discuss ideas, create plans, outline features. You can make changes if explicitl
         inputSchema: editIdentitySchema,
         execute: async (params) => {
           return await editBrandIdentity({
-            ...params,
-            projectId,
-            onProgress: async (update) => {
-              if (update.type === 'stage') {
-                const marker = `[PROGRESS:${update.stage}:${update.message}]\n`;
-                await writeProgress(marker);
-              }
-            }
-          });
-        },
-      }),
-      edit_pricing: tool({
-        description:
-          'Edit the existing pricing and business plan - use this to add/remove tiers, change prices, or update service packages. Do NOT use generate_business_plan for edits.',
-        inputSchema: editPricingSchema,
-        execute: async (params) => {
-          return await editPricing({
             ...params,
             projectId,
             onProgress: async (update) => {
@@ -537,7 +535,7 @@ Discuss ideas, create plans, outline features. You can make changes if explicitl
       tools,
 
       // Stream progress updates for tool executions
-      onStepFinish: async ({ toolCalls, toolResults }) => {
+      onStepFinish: async ({ toolCalls, toolResults, usage }) => {
         // Log timing for first step and clear escalation timer
         if (!firstTokenReceived) {
           firstTokenReceived = true;
@@ -551,12 +549,31 @@ Discuss ideas, create plans, outline features. You can make changes if explicitl
 
         console.log('[Chat API] Step finished with', toolCalls?.length || 0, 'tool calls');
 
+        // Emit token usage for cost tracking
+        if (usage) {
+          const pricing = MODEL_PRICING[selectedModel] || { input: 3, output: 15 };
+          const inputTokens = usage.inputTokens || 0;
+          const outputTokens = usage.outputTokens || 0;
+          const cost = (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
+          await writeProgress(`[TOKENS:${inputTokens}:${outputTokens}:${cost.toFixed(4)}]\n`);
+          console.log(`[Chat API] 💰 Tokens: ${inputTokens} in / ${outputTokens} out = $${cost.toFixed(4)}`);
+        }
+
         // Emit start markers for new tools
         if (toolCalls && toolCalls.length > 0) {
           for (const call of toolCalls) {
             if (!activeTools.has(call.toolName)) {
               activeTools.add(call.toolName);
               toolStartTimes[call.toolName] = Date.now();
+
+              // CRITICAL: Clear escalation timer when tool actually starts
+              // This prevents "Unusually slow today" from overriding progress during long tool executions
+              if (statusEscalationTimer) {
+                clearTimeout(statusEscalationTimer);
+                statusEscalationTimer = null;
+                console.log('[Chat API] Cleared escalation timer - tool started');
+              }
+
               const displayName = TOOL_DISPLAY_NAMES[call.toolName] || call.toolName;
               // Emit simplified [WORK:tool:description] marker
               await writeProgress(`[WORK:${call.toolName}:${displayName}]\n`);
@@ -601,9 +618,6 @@ Discuss ideas, create plans, outline features. You can make changes if explicitl
                   editToolCompleted = true;
                 } else if (toolResult.toolName === 'edit_identity') {
                   await writeProgress(`Done! Updated your brand identity.\n`);
-                  editToolCompleted = true;
-                } else if (toolResult.toolName === 'edit_pricing') {
-                  await writeProgress(`Done! Updated your pricing.\n`);
                   editToolCompleted = true;
                 }
               }

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useProjectStore } from '@/store/projectStore';
-import { Globe, DollarSign, Users, Check, Paintbrush, Image } from 'lucide-react';
+import { Globe, Users, Check, Paintbrush, Image } from 'lucide-react';
 import { useCanvasBackground, backgrounds } from '@/hooks/useCanvasBackground';
 
 export default function OverviewCanvas() {
@@ -123,19 +123,19 @@ export default function OverviewCanvas() {
         )}
       </div>
 
-      {/* Grid Layout - Centered, asymmetric */}
-      <div className="grid grid-cols-3 gap-4 p-6" style={{ maxWidth: '800px' }}>
+      {/* Grid Layout - Two cards: Website and Leads */}
+      <div className="grid grid-cols-2 gap-4 p-6" style={{ maxWidth: '800px' }}>
 
-        {/* Website Card - Wide - Just the preview */}
+        {/* Website Card - Just the preview */}
         <div
-          className={`col-span-2 rounded-2xl cursor-pointer transition-all hover:scale-[1.02] min-h-[240px] overflow-hidden ${cardBorder}`}
+          className={`col-span-1 rounded-2xl cursor-pointer transition-all hover:scale-[1.02] min-h-[300px] overflow-hidden ${cardBorder}`}
           onClick={() => {
             setCanvasState({ type: 'detail', view: 'website' });
             setWorkspaceView('SITE');
           }}
         >
           {/* Preview fills entire card */}
-          <div className="relative w-full h-full min-h-[240px] bg-white">
+          <div className="relative w-full h-full min-h-[300px] bg-white">
             {previewUrl ? (
               <iframe
                 src={previewUrl}
@@ -150,63 +150,9 @@ export default function OverviewCanvas() {
           </div>
         </div>
 
-        {/* Ads Card - 2x2 grid preview */}
+        {/* CRM/Leads Card */}
         <div
-          className={`col-span-1 rounded-2xl cursor-pointer transition-all hover:scale-[1.02] min-h-[240px] overflow-hidden relative ${cardBorder}`}
-          onClick={() => {
-            setCanvasState({ type: 'detail', view: 'ads' });
-            setWorkspaceView('ADS');
-          }}
-        >
-          {artifacts.ads?.ads?.length ? (
-            <div className="absolute inset-0 grid grid-cols-2 gap-1 p-1">
-              {artifacts.ads.ads.slice(0, 4).map((ad) => (
-                <div key={ad.id} className="relative overflow-hidden rounded-lg bg-zinc-800">
-                  <img
-                    src={ad.imageUrl}
-                    alt={ad.headline}
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className={`w-full h-full ${cardBg} flex items-center justify-center`}>
-              <Image className={`w-8 h-8 ${iconColor}`} />
-            </div>
-          )}
-        </div>
-
-        {/* Offer Card */}
-        <div
-          className={`col-span-1 ${cardBg} ${cardBorder} rounded-2xl p-6 cursor-pointer transition-all hover:scale-[1.02] min-h-[240px] flex flex-col`}
-          onClick={() => {
-            setCanvasState({ type: 'detail', view: 'offer' });
-            setWorkspaceView('FINANCE');
-          }}
-        >
-          <h3 className={`${titleColor} text-sm font-medium mb-1`}>Your Pricing</h3>
-          <p className={`${descColor} text-xs mb-3`}>
-            Monetization strategy.
-          </p>
-          <ul className="space-y-1.5 flex-1">
-            <li className={`flex items-center gap-2 text-xs ${bulletColor}`}>
-              <Check className={`w-3 h-3 ${iconColor} flex-shrink-0`} />
-              Pricing tiers
-            </li>
-            <li className={`flex items-center gap-2 text-xs ${bulletColor}`}>
-              <Check className={`w-3 h-3 ${iconColor} flex-shrink-0`} />
-              Value props
-            </li>
-          </ul>
-          <div className="flex justify-end mt-2">
-            <DollarSign className={`w-8 h-8 ${iconColor}`} />
-          </div>
-        </div>
-
-        {/* CRM/Leads Card - Wide */}
-        <div
-          className={`col-span-2 ${cardBg} ${cardBorder} rounded-2xl p-6 cursor-pointer transition-all hover:scale-[1.02] min-h-[240px] flex flex-col`}
+          className={`col-span-1 ${cardBg} ${cardBorder} rounded-2xl p-6 cursor-pointer transition-all hover:scale-[1.02] min-h-[300px] flex flex-col`}
           onClick={() => {
             setCanvasState({ type: 'detail', view: 'leads' });
             setWorkspaceView('CRM');
