@@ -29,7 +29,7 @@ export type CanvasState =
   | { type: 'empty' }
   | { type: 'loading' }
   | { type: 'overview' }
-  | { type: 'detail'; view: 'website' | 'brand' | 'plan' | 'leads' | 'clients' }
+  | { type: 'detail'; view: 'website' | 'brand' | 'plan' | 'leads' | 'clients' | 'templates' }
   | { type: 'lead-detail'; leadId: string }
   // Remix-specific states
   | { type: 'remix-crawling'; url: string; pagesDiscovered: number; pagesCrawled: number; currentPage: string }

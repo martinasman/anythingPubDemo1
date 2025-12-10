@@ -10,6 +10,7 @@ import FirstWeekPlanView from './FirstWeekPlanView';
 import LoadingCanvas from './LoadingCanvas';
 import OverviewCanvas from './OverviewCanvas';
 import LeadDetailWorkspace from './LeadDetailWorkspace';
+import TemplateBuilder from './TemplateBuilder';
 
 // Empty state component
 function EmptyStatePrompt() {
@@ -96,6 +97,8 @@ export default function ContextPanel() {
           return <CRMDashboardWrapper />;
         case 'clients':
           return <ClientsView />;
+        case 'templates':
+          return <TemplateBuilder />;
         default:
           return <OverviewCanvas />;
       }

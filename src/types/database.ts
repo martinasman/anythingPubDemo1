@@ -349,6 +349,90 @@ export type LongTermPlanArtifact = {
   };
 };
 
+// ============================================
+// TEMPLATE BUILDER TYPES
+// ============================================
+
+export type DesignDNA = {
+  layout: {
+    heroStyle: 'centered' | 'split' | 'full-bleed' | 'asymmetric' | 'minimal';
+    gridPattern: 'single-column' | '2-column' | '3-column' | '4-column' | 'bento' | 'masonry';
+    sectionSpacing: 'tight' | 'normal' | 'generous' | 'dramatic';
+    navStyle: 'fixed-top' | 'transparent' | 'minimal' | 'hamburger-only' | 'centered-logo';
+  };
+  colorScheme: {
+    dominantColor: string;
+    accentColor: string;
+    backgroundColor: string;
+    textColor: string;
+    backgroundStyle: 'light' | 'dark' | 'gradient' | 'image' | 'mixed';
+  };
+  typography: {
+    headingStyle: 'bold-sans' | 'elegant-serif' | 'geometric' | 'display' | 'minimal';
+    headingWeight: 'normal' | 'medium' | 'semibold' | 'bold' | 'black';
+    bodyFont: 'sans-serif' | 'serif' | 'mono';
+    textDensity: 'minimal' | 'balanced' | 'content-rich';
+  };
+  components: {
+    buttonStyle: 'rounded-full' | 'rounded' | 'sharp' | 'outline' | 'ghost' | 'gradient';
+    cardStyle: 'flat' | 'elevated' | 'bordered' | 'glassmorphic' | 'minimal';
+    imageStyle: 'rounded' | 'sharp' | 'circular' | 'masked' | 'full-bleed';
+  };
+  effects: {
+    hasAnimations: boolean;
+    hasShadows: boolean;
+    hasGradients: boolean;
+    hasGlassmorphism: boolean;
+    hasParallax: boolean;
+    hasHoverEffects: boolean;
+  };
+  sectionStructure: {
+    order: string[];
+    sections: Record<string, {
+      layout: string;
+      hasImage: boolean;
+      hasCards: boolean;
+      cardCount?: number;
+      hasIcons?: boolean;
+      description: string;
+      tailwindClasses: string;
+    }>;
+  };
+  overallVibe: string;
+  designNotes: string;
+};
+
+export type TemplateArtifact = {
+  id: string;
+  name: string;
+  industry: string;
+  customIndustry?: string; // If user created custom industry
+  screenshotUrl?: string;  // Original screenshot used for analysis
+  designDNA: DesignDNA;
+  baseWebsite: {
+    files: Array<{
+      path: string;
+      content: string;
+      type: 'html' | 'css' | 'js';
+    }>;
+    primaryPage: string;
+  };
+  generatedSites: Array<{
+    leadId: string;
+    leadName: string;
+    previewToken: string;
+    previewUrl: string;
+    generatedAt: string;
+    status: 'generating' | 'ready' | 'sent' | 'viewed';
+  }>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TemplatesArtifact = {
+  templates: TemplateArtifact[];
+};
+
 // Lead website artifact (for preview generation)
 export type LeadWebsiteArtifact = {
   leadId: string;
@@ -463,7 +547,8 @@ export type ArtifactData =
   | LongTermPlanArtifact
   | LeadWebsitesArtifact
   | CRMArtifact
-  | CrawledSiteArtifact;
+  | CrawledSiteArtifact
+  | TemplatesArtifact;
 
 // ============================================
 // DATABASE TABLE TYPES
@@ -512,7 +597,8 @@ export type ArtifactType =
   | 'contracts'
   | 'client_work'
   | 'administration'
-  | 'crawled_site';
+  | 'crawled_site'
+  | 'templates';
 
 export type Artifact = {
   id: string;
@@ -684,6 +770,10 @@ export function isLeadWebsitesArtifact(data: ArtifactData): data is LeadWebsites
 
 export function isCrawledSiteArtifact(data: ArtifactData): data is CrawledSiteArtifact {
   return 'site' in data && 'sourceUrl' in data && 'crawledAt' in data;
+}
+
+export function isTemplatesArtifact(data: ArtifactData): data is TemplatesArtifact {
+  return 'templates' in data && Array.isArray((data as TemplatesArtifact).templates);
 }
 
 // ============================================

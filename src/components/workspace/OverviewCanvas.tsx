@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useProjectStore } from '@/store/projectStore';
-import { Globe, Users, Check, Paintbrush, Image, Crown } from 'lucide-react';
+import { Globe, Users, Check, Paintbrush, Image, Crown, Sparkles } from 'lucide-react';
 import { useCanvasBackground, backgrounds } from '@/hooks/useCanvasBackground';
 import { CustomerCard, type Customer } from './CustomerCard';
 
@@ -136,8 +136,8 @@ export default function OverviewCanvas() {
         )}
       </div>
 
-      {/* Grid Layout - Three cards: Website, Leads, and Customers */}
-      <div className="grid grid-cols-3 gap-4 p-6" style={{ maxWidth: '1200px' }}>
+      {/* Grid Layout - Four cards: Website, Leads, Customers, Templates */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-6" style={{ maxWidth: '1400px' }}>
 
         {/* Website Card - Large preview */}
         <div
@@ -273,6 +273,45 @@ export default function OverviewCanvas() {
             <span className={`text-sm ${descColor} ml-2`}>
               {customers.length === 1 ? 'customer' : 'customers'}
             </span>
+          </div>
+        </div>
+
+        {/* Template Builder Card */}
+        <div
+          className={`col-span-1 ${cardBg} ${cardBorder} rounded-2xl p-6 cursor-pointer transition-all hover:scale-[1.02] flex flex-col bg-gradient-to-br from-blue-500/10 to-purple-500/10`}
+          style={{ minHeight: '350px', aspectRatio: '16/10' }}
+          onClick={() => {
+            setCanvasState({ type: 'detail', view: 'templates' });
+          }}
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <Sparkles className="w-5 h-5 text-blue-500" />
+            <h3 className={`${titleColor} text-sm font-medium`}>Template Builder</h3>
+          </div>
+          <p className={`${descColor} text-xs mb-4`}>
+            Create templates from screenshots, generate sites for leads.
+          </p>
+          <ul className="space-y-2 flex-1">
+            <li className={`flex items-center gap-2 text-xs ${bulletColor}`}>
+              <Check className={`w-3 h-3 ${iconColor} flex-shrink-0`} />
+              Upload design reference
+            </li>
+            <li className={`flex items-center gap-2 text-xs ${bulletColor}`}>
+              <Check className={`w-3 h-3 ${iconColor} flex-shrink-0`} />
+              AI extracts design DNA
+            </li>
+            <li className={`flex items-center gap-2 text-xs ${bulletColor}`}>
+              <Check className={`w-3 h-3 ${iconColor} flex-shrink-0`} />
+              Bulk generate personalized sites
+            </li>
+            <li className={`flex items-center gap-2 text-xs ${bulletColor}`}>
+              <Check className={`w-3 h-3 ${iconColor} flex-shrink-0`} />
+              Export preview links for outreach
+            </li>
+          </ul>
+          {/* CTA */}
+          <div className={`mt-auto pt-4 border-t ${isDark ? 'border-zinc-700' : 'border-zinc-200'}`}>
+            <span className="text-sm font-medium text-blue-500">Start Building</span>
           </div>
         </div>
 
